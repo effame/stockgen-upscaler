@@ -19,7 +19,7 @@ print('Patched:', path)\
 "
 
 # Pre-download weights so cold start is fast
-RUN python -c "\
+RUN mkdir -p /weights && python -c "\
 import urllib.request;\
 urllib.request.urlretrieve('https://huggingface.co/nateraw/real-esrgan/resolve/main/RealESRGAN_x2plus.pth', '/weights/RealESRGAN_x2plus.pth');\
 urllib.request.urlretrieve('https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth', '/weights/RealESRGAN_x4plus.pth')\
