@@ -6,26 +6,6 @@ from cog import BasePredictor, Input
 
 
 class Predictor(BasePredictor):
-    def setup(self):
-        subprocess.run(["upscayl-bin", "--help"], capture_output=False)
-        result = subprocess.run(
-            ["ls", "-la", "/usr/local/bin/upscayl-bin"], capture_output=True, text=True
-        )
-        sys.stderr.write(f"Binary check: {result.stdout}{result.stderr}\n")
-
-        model_check = subprocess.run(
-            ["ls", "-la", "/src/models/"], capture_output=True, text=True
-        )
-        sys.stderr.write(f"Models: {model_check.stdout}{model_check.stderr}\n")
-
-        vulkan_check = subprocess.run(
-            ["ldconfig", "-p"], capture_output=True, text=True
-        )
-        vulkan_lines = [
-            l for l in vulkan_check.stdout.split("\n") if "vulkan" in l.lower()
-        ]
-        sys.stderr.write(f"Vulkan libs: {vulkan_lines}\n")
-
     def predict(
         self,
         image: Path = Input(description="Input image to upscale"),
@@ -46,6 +26,10 @@ class Predictor(BasePredictor):
             choices=["png", "jpg", "webp"],
         ),
     ) -> Path:
+        sys.stderr.write(f"Image type: {type(image)}, value: {image!r}\n")
+        sys.stderr.write(f"Image is_file: {Path(image).is_file()}\n")
+        sys.stderr.write(f"Models: {list(Path('/src/models').iterdir())}\n")
+
         out_dir = Path(tempfile.mkdtemp())
         out_path = out_dir / f"output.{output_format}"
 
