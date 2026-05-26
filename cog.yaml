@@ -3,14 +3,13 @@ build:
   cuda: "12.1"
   system_packages:
     - "libvulkan1"
-    - "libvulkan-dev"
     - "vulkan-tools"
-    - "libgl1-mesa-glx"
-    - "libglib2.0-0"
     - "unzip"
   python_version: "3.11"
   python_requirements: requirements.txt
   run:
+    # Install NVIDIA Vulkan ICD -- this makes upscayl-bin find the GPU
+    - apt-get update && apt-get install -y nvidia-vulkan-icd --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
     - mkdir -p /src/bin /src/models/upscayl-standard-4x
     - curl -SL "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-linux.zip" -o /tmp/upscayl.zip
     - cd /tmp && unzip -o upscayl.zip && mv upscayl-bin-20251207-174704-linux/upscayl-bin /src/bin/upscayl-bin && chmod +x /src/bin/upscayl-bin && rm -rf /tmp/upscayl*
