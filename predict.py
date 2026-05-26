@@ -8,12 +8,28 @@ from cog import BasePredictor, Input, Path
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
 
+MODELS = {
+    "default": {
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+        "file": "RealESRGAN_x4plus.pth",
+        "desc": "Real-ESRGAN x4plus",
+    },
+    "ultrasharp": {
+        "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
+        "file": "4x-UltraSharp.pth",
+        "desc": "4x-UltraSharp",
+    },
+    "remacri": {
+        "url": "https://huggingface.co/Kim2091/Remacri/resolve/main/4x-Remacri.pth",
+        "file": "4x-Remacri.pth",
+        "desc": "4x-Remacri",
+    },
+}
 
-MODEL_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
-MODEL_PATH = "/src/weights/RealESRGAN_x4plus.pth"
+BASE_WEIGHTS = "/src/weights"
 
 
-def download_weights(url: str, dest: str):
+def download_weights(url, dest):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if not os.path.exists(dest):
         subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
@@ -21,44 +37,45 @@ def download_weights(url: str, dest: str):
 
 class Predictor(BasePredictor):
     def setup(self):
-        download_weights(MODEL_URL, MODEL_PATH)
-
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-        self.upsampler = RealESRGANer(
-            scale=4,
-            model_path=MODEL_PATH,
-            model=model,
-            tile=400,
-            tile_pad=10,
-            pre_pad=0,
-            half=True,
-            gpu_id=0,
-        )
+        self.upsamplers = {}
+        for key, cfg in MODELS.items():
+            dest = os.path.join(BASE_WEIGHTS, cfg["file"])
+            download_weights(cfg["url"], dest)
+            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+            self.upsamplers[key] = RealESRGANer(
+                scale=4,
+                model_path=dest,
+                model=model,
+                tile=400,
+                tile_pad=10,
+                pre_pad=0,
+                half=True,
+                gpu_id=0,
+            )
 
     def predict(
         self,
         image: Path = Input(description="Input image"),
-        scale: float = Input(
-            description="Upscale factor",
-            default=4,
-            ge=1,
-            le=8,
+        scale: float = Input(description="Upscale factor", default=4, ge=1, le=8),
+        model: str = Input(
+            description="Model to use",
+            default="default",
+            choices=list(MODELS.keys()),
         ),
-        tile: int = Input(
-            description="Tile size (0=auto, 200-400 for large images)",
-            default=0,
-            ge=0,
-            le=1024,
-        ),
+        tile: int = Input(description="Tile size (0=auto)", default=0, ge=0, le=1024),
     ) -> Path:
         img = cv2.imread(str(image), cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError(f"Could not read image: {image}")
 
-        if tile > 0:
-            self.upsampler.tile = tile
+        if model not in self.upsamplers:
+            model = "default"
 
-        output, _ = self.upsampler.enhance(img, outscale=scale)
+        upsampler = self.upsamplers[model]
+        if tile > 0:
+            upsampler.tile = tile
+
+        output, _ = upsampler.enhance(img, outscale=scale)
 
         out_dir = Path(tempfile.mkdtemp())
         out_path = out_dir / "output.png"
