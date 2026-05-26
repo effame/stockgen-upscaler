@@ -1,1 +1,7 @@
-cog
+numpy<2
+torch==2.2.0
+torchvision==0.17.0
+facexlib==0.3.0
+opencv-python==4.10.0.84
+Pillow==10.4.0
+tqdm==4.64.0

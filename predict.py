@@ -1,61 +1,85 @@
-import pathlib
+import os
+import shutil
 import subprocess
-import sys
 import tempfile
+from pathlib import Path
+
+import cv2
+import torch
 from cog import BasePredictor, Input, Path
+from gfpgan import GFPGANer
+from realesrgan import RealESRGANer
+from basicsr.archs.rrdbnet_arch import RRDBNet
+
+
+MODEL_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+MODEL_PATH = "/src/weights/RealESRGAN_x4plus.pth"
+
+
+def download_weights(url: str, dest: str):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if not os.path.exists(dest):
+        subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
 
 
 class Predictor(BasePredictor):
+    def setup(self):
+        download_weights(MODEL_URL, MODEL_PATH)
+
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+        self.upsampler = RealESRGANer(
+            scale=4,
+            model_path=MODEL_PATH,
+            model=model,
+            tile=400,
+            tile_pad=10,
+            pre_pad=0,
+            half=True,
+            gpu_id=0,
+        )
+
+        self.face_enhancer = GFPGANer(
+            model_path="https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth",
+            upscale=1,
+            arch="clean",
+            channel_multiplier=2,
+            bg_upsampler=self.upsampler,
+        )
+
     def predict(
         self,
         image: Path = Input(description="Input image to upscale"),
-        scale: int = Input(
-            description="Upscale factor (2, 3, or 4)",
+        scale: float = Input(
+            description="Upscale factor",
             default=4,
-            choices=[2, 3, 4],
+            ge=1,
+            le=8,
+        ),
+        face_enhance: bool = Input(
+            description="Enhance faces with GFPGAN",
+            default=False,
         ),
         tile: int = Input(
-            description="Tile size (0 = off, 200-400 for large images)",
+            description="Tile size (0 = auto, 200-400 recommended for large images)",
             default=0,
             ge=0,
             le=1024,
         ),
-        output_format: str = Input(
-            description="Output image format",
-            default="png",
-            choices=["png", "jpg", "webp"],
-        ),
     ) -> Path:
-        input_path = pathlib.Path(str(image))
-        sys.stderr.write(f"Input: {input_path}, exists: {input_path.exists()}, size: {input_path.stat().st_size}\n")
-
-        out_dir = pathlib.Path(tempfile.mkdtemp())
-        out_path = out_dir / f"output.{output_format}"
-
-        cmd = [
-            "upscayl-bin",
-            "-i", str(input_path),
-            "-o", str(out_path),
-            "-s", str(scale),
-            "-m", "/src/models",
-            "-n", "high-fidelity-4x",
-            "-f", output_format,
-            "-c", "0",
-        ]
+        img = cv2.imread(str(image), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError(f"Could not read image: {image}")
 
         if tile > 0:
-            cmd.extend(["-t", str(tile)])
+            self.upsampler.tile = tile
 
-        sys.stderr.write(f"Cmd: {' '.join(cmd)}\n")
+        if face_enhance:
+            _, _, output = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
+        else:
+            output, _ = self.upsampler.enhance(img, outscale=scale)
 
-        result = subprocess.run(cmd, capture_output=False, text=True)
+        out_dir = Path(tempfile.mkdtemp())
+        out_path = out_dir / "output.png"
+        cv2.imwrite(str(out_path), output)
 
-        sys.stderr.write(f"Return code: {result.returncode}\n")
-
-        if not out_path.exists():
-            ls = [str(p) for p in out_dir.iterdir()]
-            sys.stderr.write(f"Output not found. Dir: {ls}\n")
-            raise FileNotFoundError(f"Output not created at {out_path}")
-
-        sys.stderr.write(f"Output: {out_path.stat().st_size} bytes\n")
         return Path(str(out_path))

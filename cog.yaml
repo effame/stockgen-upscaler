@@ -1,13 +1,15 @@
 build:
   gpu: true
+  cuda: "12.1"
   system_packages:
-    - "libvulkan1"
+    - "libgl1-mesa-glx"
+    - "libglib2.0-0"
   python_version: "3.11"
   python_requirements: requirements.txt
   run:
-    - curl -L -o /usr/local/bin/upscayl-bin "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/linux/bin/upscayl-bin" && chmod +x /usr/local/bin/upscayl-bin
-    - mkdir -p /src/models
-    - curl -L -o /src/models/high-fidelity-4x.param "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/models/high-fidelity-4x.param"
-    - curl -L -o /src/models/high-fidelity-4x.bin "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/models/high-fidelity-4x.bin"
+    - pip install git+https://github.com/XPixelGroup/BasicSR.git
+    - pip install gfpgan
+    - pip install realesrgan
+    - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.8.2/pget_linux_x86_64" && chmod +x /usr/local/bin/pget
 
 predict: "predict.py:Predictor"
