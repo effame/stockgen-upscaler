@@ -1,0 +1,14 @@
+build:
+  gpu: true
+  system_packages:
+    - "libvulkan1"
+  python_version: "3.11"
+  python_packages:
+    - "cog"
+  run:
+    - curl -L -o /usr/local/bin/upscayl-bin "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/linux/bin/upscayl-bin" && chmod +x /usr/local/bin/upscayl-bin
+    - mkdir -p /src/models
+    - curl -L -o /src/models/high-fidelity-4x.param "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/models/high-fidelity-4x.param"
+    - curl -L -o /src/models/high-fidelity-4x.bin "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/models/high-fidelity-4x.bin"
+
+predict: "predict.py:Predictor"
