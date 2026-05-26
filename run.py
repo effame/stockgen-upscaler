@@ -52,38 +52,27 @@ class RRDBNet(nn.Module):
     def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32, scale=4):
         super().__init__()
         self.scale = scale
-        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1)
+        pu = 2 if scale == 2 else 1
+        self.conv_first = nn.Conv2d(in_nc * pu * pu, nf, 3, 1, 1)
         self.body = nn.ModuleList([RRDB(nf, gc) for _ in range(nb)])
         self.conv_body = nn.Conv2d(nf, nf, 3, 1, 1)
-
-        if scale == 4:
-            self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
-            self.conv_up2 = nn.Conv2d(nf, nf, 3, 1, 1)
-        elif scale == 2:
-            self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
-            self.conv_up2 = None
-        else:
-            raise ValueError(f"Unsupported scale: {scale}")
-
+        self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
+        self.conv_up2 = nn.Conv2d(nf, nf, 3, 1, 1)
         self.conv_hr = nn.Conv2d(nf, nf, 3, 1, 1)
         self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1)
         self.lrelu = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x):
-        feat = self.conv_first(x)
+        if self.scale == 2:
+            feat = F.pixel_unshuffle(x, 2)
+        else:
+            feat = x
+        feat = self.conv_first(feat)
         for block in self.body:
             feat = block(feat)
         feat = self.conv_body(feat)
-
-        if self.scale == 4:
-            feat = self.lrelu(F.interpolate(feat, scale_factor=4, mode="nearest"))
-            feat = self.lrelu(self.conv_up1(feat))
-            feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
-            feat = self.lrelu(self.conv_up2(feat))
-        elif self.scale == 2:
-            feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
-            feat = self.lrelu(self.conv_up1(feat))
-
+        feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode='nearest')))
+        feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.conv_hr(feat)))
         return out
 
@@ -125,10 +114,10 @@ def download_weights(url, dest):
 
 
 def detect_scale_from_checkpoint(state_dict):
-    for k in state_dict.keys():
-        if "conv_up2" in k:
-            return 4
-    return 2
+    for k, v in state_dict.items():
+        if "conv_first.weight" in k:
+            return 2 if v.shape[1] >= 6 else 4
+    return 4
 
 
 def _remap_ultrasharp_key(k):
@@ -167,7 +156,6 @@ def load_model(model_path, device):
     else:
         state = checkpoint
 
-    # Check if this is ultrasharp-style format
     first_key = next(iter(state.keys()))
     is_ultrasharp = first_key.startswith("model.")
 
@@ -183,13 +171,17 @@ def load_model(model_path, device):
 
     scale = detect_scale_from_checkpoint(state)
 
-    # Detect input channels from checkpoint
     for key in state:
         if "conv_first.weight" in key:
-            in_nc = state[key].shape[1]
+            ckpt_in_nc = state[key].shape[1]
             break
     else:
-        in_nc = 3
+        ckpt_in_nc = 3
+
+    if scale == 2:
+        in_nc = ckpt_in_nc // 4
+    else:
+        in_nc = ckpt_in_nc
 
     model = RRDBNet(in_nc=in_nc, scale=scale)
     new_state = OrderedDict()
@@ -209,12 +201,6 @@ def inference_tiled(model, img_bgr, tile_size=400, tile_pad=10):
     img_t = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0) / 255.0
     device = next(model.parameters()).device
     img_t = img_t.to(device)
-
-    # x2 models use pixel_unshuffle: reduce spatial, increase channels
-    if model.conv_first.in_channels == 12:
-        img_t = F.pixel_unshuffle(img_t, 2)  # [1, 12, H/2, W/2]
-        h //= 2
-        w //= 2
 
     scale = model.scale
     oh, ow = h * scale, w * scale
