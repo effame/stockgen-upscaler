@@ -1,8 +1,8 @@
+import pathlib
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-from cog import BasePredictor, Input
+from cog import BasePredictor, Input, Path
 
 
 class Predictor(BasePredictor):
@@ -15,7 +15,7 @@ class Predictor(BasePredictor):
             choices=[2, 3, 4],
         ),
         tile: int = Input(
-            description="Tile size for segmented processing (0 = off, 200-400 recommended for large images)",
+            description="Tile size (0 = off, 200-400 for large images)",
             default=0,
             ge=0,
             le=1024,
@@ -26,16 +26,15 @@ class Predictor(BasePredictor):
             choices=["png", "jpg", "webp"],
         ),
     ) -> Path:
-        sys.stderr.write(f"Image type: {type(image)}, value: {image!r}\n")
-        sys.stderr.write(f"Image is_file: {Path(image).is_file()}\n")
-        sys.stderr.write(f"Models: {list(Path('/src/models').iterdir())}\n")
+        input_path = pathlib.Path(str(image))
+        sys.stderr.write(f"Input: {input_path}, exists: {input_path.exists()}, size: {input_path.stat().st_size}\n")
 
-        out_dir = Path(tempfile.mkdtemp())
+        out_dir = pathlib.Path(tempfile.mkdtemp())
         out_path = out_dir / f"output.{output_format}"
 
         cmd = [
             "upscayl-bin",
-            "-i", str(image),
+            "-i", str(input_path),
             "-o", str(out_path),
             "-s", str(scale),
             "-m", "/src/models",
@@ -47,19 +46,16 @@ class Predictor(BasePredictor):
         if tile > 0:
             cmd.extend(["-t", str(tile)])
 
-        sys.stderr.write(f"Running: {' '.join(cmd)}\n")
+        sys.stderr.write(f"Cmd: {' '.join(cmd)}\n")
 
         result = subprocess.run(cmd, capture_output=False, text=True)
 
         sys.stderr.write(f"Return code: {result.returncode}\n")
 
         if not out_path.exists():
-            sys.stderr.write(f"Output file not found at {out_path}\n")
-            sys.stderr.write(
-                f"Directory contents: {[str(p) for p in out_dir.iterdir()]}\n"
-            )
-            raise FileNotFoundError(f"Output file not created at {out_path}")
+            ls = [str(p) for p in out_dir.iterdir()]
+            sys.stderr.write(f"Output not found. Dir: {ls}\n")
+            raise FileNotFoundError(f"Output not created at {out_path}")
 
-        sys.stderr.write(f"Output size: {out_path.stat().st_size} bytes\n")
-
-        return Path(out_path)
+        sys.stderr.write(f"Output: {out_path.stat().st_size} bytes\n")
+        return Path(str(out_path))
