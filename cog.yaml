@@ -3,8 +3,7 @@ build:
   system_packages:
     - "libvulkan1"
   python_version: "3.11"
-  python_packages:
-    - "cog"
+  python_requirements: requirements.txt
   run:
     - curl -L -o /usr/local/bin/upscayl-bin "https://raw.githubusercontent.com/upscayl/upscayl/main/resources/linux/bin/upscayl-bin" && chmod +x /usr/local/bin/upscayl-bin
     - mkdir -p /src/models

@@ -1,13 +1,13 @@
 import subprocess
 import tempfile
 from pathlib import Path
-from cog import BasePredictor, Input, Path as CogPath
+from cog import BasePredictor, Input
 
 
 class Predictor(BasePredictor):
     def predict(
         self,
-        image: CogPath = Input(description="Input image to upscale"),
+        image: Path = Input(description="Input image to upscale"),
         scale: int = Input(
             description="Upscale factor (2, 3, or 4)",
             default=4,
@@ -19,14 +19,14 @@ class Predictor(BasePredictor):
             ge=0,
             le=1024,
         ),
-        format: str = Input(
+        output_format: str = Input(
             description="Output image format",
             default="png",
             choices=["png", "jpg", "webp"],
         ),
-    ) -> CogPath:
+    ) -> Path:
         out_dir = Path(tempfile.mkdtemp())
-        out_path = out_dir / f"output.{format}"
+        out_path = out_dir / f"output.{output_format}"
 
         cmd = [
             "upscayl-bin",
@@ -35,7 +35,7 @@ class Predictor(BasePredictor):
             "-s", str(scale),
             "-m", "/src/models",
             "-n", "high-fidelity-4x",
-            "-f", format,
+            "-f", output_format,
             "-c", "0",
         ]
 
@@ -44,4 +44,4 @@ class Predictor(BasePredictor):
 
         subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-        return CogPath(out_path)
+        return Path(out_path)
