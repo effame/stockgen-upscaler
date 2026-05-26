@@ -5,10 +5,11 @@ RUN apt-get update && apt-get install -y libxcb1 libgl1-mesa-glx libglib2.0-0 &&
 
 RUN pip install --no-cache-dir opencv-python-headless basicsr realesrgan runpod
 
-# Patch basicsr for torchvision >= 0.15
+# Patch basicsr without importing it (chicken-and-egg: import triggers the error we patch)
 RUN python -c "\
-import basicsr, os;\
-path = os.path.join(os.path.dirname(basicsr.__file__), 'data', 'degradations.py');\
+import importlib.util, os;\
+spec = importlib.util.find_spec('basicsr');\
+path = os.path.join(os.path.dirname(spec.origin), 'data', 'degradations.py');\
 content = open(path).read();\
 content = content.replace(\
   'from torchvision.transforms.functional_tensor import rgb_to_grayscale',\
