@@ -239,7 +239,7 @@ def main():
     parser = argparse.ArgumentParser(description="Real-ESRGAN Upscaler")
     parser.add_argument("--image", "-i", help="Image path or URL")
     parser.add_argument("--output", "-o", default=None, help="Output path")
-    parser.add_argument("--scale", "-s", type=float, default=4, help="Scale factor (1-4)")
+    parser.add_argument("--scale", "-s", type=float, default=2, help="Scale factor (1-4)")
     parser.add_argument("--tile", "-t", type=int, default=0, help="Tile size (0=auto)")
     parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()))
     parser.add_argument("--format", "-f", default="png", choices=["png", "jpg"], help="Output format")
