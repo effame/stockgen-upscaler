@@ -25,18 +25,6 @@ MODELS = {
         "scale": 2,
         "desc": "Real-ESRGAN x2plus",
     },
-    "x4plus": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-        "file": "RealESRGAN_x4plus.pth",
-        "scale": 4,
-        "desc": "Real-ESRGAN x4plus",
-    },
-    "ultrasharp": {
-        "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
-        "file": "4x-UltraSharp.pth",
-        "scale": 4,
-        "desc": "4x-UltraSharp",
-    },
 }
 
 BASE_WEIGHTS = "/src/weights"
@@ -81,9 +69,6 @@ class Predictor(BasePredictor):
         img = cv2.imread(str(image), cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError(f"Could not read image: {image}")
-
-        if model not in self.upsamplers:
-            model = "x2plus"
 
         upsampler = self.upsamplers[model]
         if tile > 0:
