@@ -126,7 +126,7 @@ def _remap_ultrasharp_key(k):
     if inner.startswith("8."):
         return "conv_hr." + inner[2:]
     if inner.startswith("10."):
-        return "conv_last." + inner[2:]
+        return "conv_last." + inner[3:]
     return None  # skip non-parameter layers
 
 
