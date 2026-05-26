@@ -260,6 +260,8 @@ def upscale(image_path, tile=0, output_path=None, model_key="x2plus",
     if output_path is None:
         out_dir = tempfile.mkdtemp()
         output_path = os.path.join(out_dir, f"output.{fmt}")
+    elif "." not in os.path.basename(output_path):
+        output_path = f"{output_path}.{fmt}"
 
     params = []
     if fmt == "jpg":
