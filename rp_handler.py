@@ -24,11 +24,6 @@ MODELS = {
         "file": "RealESRGAN_x2plus.pth",
         "scale": 2,
     },
-    "x4plus": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-        "file": "RealESRGAN_x4plus.pth",
-        "scale": 4,
-    },
 }
 
 WEIGHTS_DIR = "/weights"
