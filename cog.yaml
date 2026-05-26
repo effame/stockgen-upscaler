@@ -1,19 +1,14 @@
 build:
   gpu: true
-  cuda: "12.1"
   system_packages:
-    - "libvulkan1"
-    - "vulkan-tools"
+    - "libgl1-mesa-glx"
+    - "libglib2.0-0"
     - "unzip"
   python_version: "3.11"
   python_requirements: requirements.txt
   run:
-    # Install NVIDIA Vulkan ICD -- this makes upscayl-bin find the GPU
-    - apt-get update && apt-get install -y nvidia-vulkan-icd --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
-    - mkdir -p /src/bin /src/models/upscayl-standard-4x
-    - curl -SL "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-linux.zip" -o /tmp/upscayl.zip
-    - cd /tmp && unzip -o upscayl.zip && mv upscayl-bin-20251207-174704-linux/upscayl-bin /src/bin/upscayl-bin && chmod +x /src/bin/upscayl-bin && rm -rf /tmp/upscayl*
-    - curl -SL "https://raw.githubusercontent.com/upscayl/upscayl/v2.15.0/resources/models/upscayl-standard-4x.param" -o /src/models/upscayl-standard-4x/upscayl-standard-4x.param
-    - curl -SL "https://raw.githubusercontent.com/upscayl/upscayl/v2.15.0/resources/models/upscayl-standard-4x.bin" -o /src/models/upscayl-standard-4x/upscayl-standard-4x.bin
+    - pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu121
+    - pip install realesrgan
+    - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.8.2/pget_linux_x86_64" && chmod +x /usr/local/bin/pget
 
 predict: "predict.py:Predictor"
