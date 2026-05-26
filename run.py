@@ -92,7 +92,7 @@ class RRDBNet(nn.Module):
 
 MODELS = OrderedDict()
 MODELS["x2plus"] = {
-    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x2plus.pth",
+    "url": "https://huggingface.co/nateraw/real-esrgan/resolve/main/RealESRGAN_x2plus.pth",
     "file": "RealESRGAN_x2plus.pth",
     "scale": 2,
     "desc": "Real-ESRGAN x2plus (2x, ไฟล์เล็กลง 4x)",
