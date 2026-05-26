@@ -212,20 +212,15 @@ def upscale(image_path, scale=2, tile=0, output_path=None, model_key="default",
 
     h, w = img.shape[:2]
     print(f"Input: {w}x{h}")
-
-    # Model is always 4x native. Resize input to match desired output scale.
-    if scale != 4:
-        factor = scale / 4.0
-        new_w, new_h = int(w * factor + 0.5), int(h * factor + 0.5)
-        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-        h, w = new_h, new_w
-        print(f"Resized input → {w}x{h} for x{scale} output")
-
+    target_w, target_h = int(w * scale + 0.5), int(h * scale + 0.5)
     print(f"Upscaling 4x...")
     t = tile or 400
     output = inference_tiled(model, img, tile_size=t)
 
     oh, ow = output.shape[:2]
+    if (oh, ow) != (target_h, target_w):
+        output = cv2.resize(output, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+        oh, ow = target_h, target_w
     print(f"Output: {ow}x{oh}")
 
     if output_path is None:
