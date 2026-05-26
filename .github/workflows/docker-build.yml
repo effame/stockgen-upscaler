@@ -3,11 +3,6 @@ name: Build Docker for RunPod
 on:
   push:
     branches: [main]
-    paths:
-      - "Dockerfile"
-      - "rp_handler.py"
-      - ".github/workflows/docker-build.yml"
-      - "requirements.txt"
   workflow_dispatch:
 
 env:
