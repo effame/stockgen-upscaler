@@ -4,7 +4,6 @@ import tempfile
 from pathlib import Path
 
 import cv2
-import torch
 from cog import BasePredictor, Input, Path
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
