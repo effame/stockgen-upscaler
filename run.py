@@ -1,14 +1,80 @@
 """
-Real-ESRGAN Image Upscaler — รองรับหลายโมเดล
+Real-ESRGAN Image Upscaler — ไม่依赖 external libs นอกจาก torch + cv2
 """
 import argparse
+import math
 import os
 import tempfile
+from collections import OrderedDict
 
 import cv2
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import urllib.request
-from collections import OrderedDict
+
+
+# ─── RRDBNet architecture (copy from basicsr, no import needed) ───
+
+class ResidualDenseBlock(nn.Module):
+    def __init__(self, nf=64, gc=32):
+        super().__init__()
+        self.conv1 = nn.Conv2d(nf, gc, 3, 1, 1)
+        self.conv2 = nn.Conv2d(nf + gc, gc, 3, 1, 1)
+        self.conv3 = nn.Conv2d(nf + 2 * gc, gc, 3, 1, 1)
+        self.conv4 = nn.Conv2d(nf + 3 * gc, gc, 3, 1, 1)
+        self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1)
+        self.lrelu = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        return x5 * 0.2 + x
+
+
+class RRDB(nn.Module):
+    def __init__(self, nf=64, gc=32):
+        super().__init__()
+        self.rdb1 = ResidualDenseBlock(nf, gc)
+        self.rdb2 = ResidualDenseBlock(nf, gc)
+        self.rdb3 = ResidualDenseBlock(nf, gc)
+
+    def forward(self, x):
+        out = self.rdb1(x)
+        out = self.rdb2(out)
+        out = self.rdb3(out)
+        return out * 0.2 + x
+
+
+class RRDBNet(nn.Module):
+    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32):
+        super().__init__()
+        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1)
+        self.body = nn.ModuleList([RRDB(nf, gc) for _ in range(nb)])
+        self.conv_body = nn.Conv2d(nf, nf, 3, 1, 1)
+        self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
+        self.conv_up2 = nn.Conv2d(nf, nf, 3, 1, 1)
+        self.conv_hr = nn.Conv2d(nf, nf, 3, 1, 1)
+        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1)
+        self.lrelu = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, x):
+        feat = self.conv_first(x)
+        for block in self.body:
+            feat = block(feat)
+        feat = self.conv_body(feat)
+        feat = self.lrelu(F.interpolate(feat, scale_factor=4, mode="nearest"))
+        feat = self.lrelu(self.conv_up1(feat))
+        feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
+        feat = self.lrelu(self.conv_up2(feat))
+        out = self.conv_last(self.lrelu(self.conv_hr(feat)))
+        return out
+
+
+# ─── Model registry ───
 
 MODELS = {
     "default": {
@@ -21,11 +87,6 @@ MODELS = {
         "file": "4x-UltraSharp.pth",
         "desc": "4x-UltraSharp (คมชัด, ภาพคน, ผลิตภัณฑ์)",
     },
-    "nmkd": {
-        "url": "https://icedrive.net/1/43GNBihZyi",
-        "file": "4x_NMKD-Superscale.pth",
-        "desc": "NMKD Superscale (ภาพ realistic, noise)",
-    },
 }
 
 
@@ -35,8 +96,7 @@ def download_weights(url, dest):
         print(f"Downloading model weights...")
         try:
             urllib.request.urlretrieve(url, dest)
-        except urllib.error.HTTPError as e:
-            print(f"Download failed: {e}")
+        except Exception as e:
             if os.path.exists(dest):
                 os.remove(dest)
             raise
@@ -44,38 +104,61 @@ def download_weights(url, dest):
 
 
 def load_model(model_path, device):
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-
+    model = RRDBNet()
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
 
-    if "params" in checkpoint:
-        state_dict = checkpoint["params"]
-    elif "params_ema" in checkpoint:
-        state_dict = checkpoint["params_ema"]
-    elif "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    elif "model" in checkpoint:
-        state_dict = checkpoint["model"]
+    for key in ["params", "params_ema", "state_dict", "model"]:
+        if key in checkpoint:
+            state = checkpoint[key]
+            break
     else:
-        state_dict = checkpoint
+        state = checkpoint
 
     new_state = OrderedDict()
-    for k, v in state_dict.items():
-        if k.startswith("module."):
-            k = k[7:]
-        new_state[k] = v
+    for k, v in state.items():
+        new_state[k[7:] if k.startswith("module.") else k] = v
 
     model.load_state_dict(new_state)
-    model = model.to(device)
-    model.eval()
+    model = model.to(device).eval()
     return model
+
+
+@torch.no_grad()
+def inference_tiled(model, img_bgr, scale, tile_size=400, tile_pad=10):
+    import numpy as np
+    h, w = img_bgr.shape[:2]
+    img = img_bgr[:, :, ::-1].copy()  # BGR → RGB
+    img_t = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0) / 255.0
+    device = next(model.parameters()).device
+    img_t = img_t.to(device)
+
+    oh, ow = h * scale, w * scale
+    out = torch.zeros(1, 3, oh, ow, device=device)
+    ts = min(tile_size, h // 2 + 1) * scale
+
+    for y in range(0, h, tile_size):
+        for x in range(0, w, tile_size):
+            y0 = max(0, y - tile_pad)
+            y1 = min(h, y + tile_size + tile_pad)
+            x0 = max(0, x - tile_pad)
+            x1 = min(w, x + tile_size + tile_pad)
+
+            patch = img_t[:, :, y0:y1, x0:x1]
+            pred = model(patch)
+            pred = pred[:, :, :min(tile_size, h - y) * scale, :min(tile_size, w - x) * scale]
+
+            dy = pred.shape[2]
+            dx = pred.shape[3]
+            out[:, :, y * scale:y * scale + dy, x * scale:x * scale + dx] = pred
+
+    result = out.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy() * 255.0
+    result = result[:, :, ::-1].astype(np.uint8)  # RGB → BGR
+    return result
 
 
 def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default"):
     if model_key not in MODELS:
-        raise ValueError(f"Unknown model: {model_key}. Available: {list(MODELS.keys())}")
+        raise ValueError(f"Unknown model: {model_key}")
 
     cfg = MODELS[model_key]
     print(f"Model: {cfg['desc']}")
@@ -97,9 +180,8 @@ def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default"):
     print(f"Input: {w}x{h}")
     print(f"Upscaling x{scale}...")
 
-    tile_size = tile or 400
-
-    output = inference_tiled(model, img, scale, tile_size, tile_pad=10, device=device)
+    t = tile or 400
+    output = inference_tiled(model, img, scale, tile_size=t)
 
     oh, ow = output.shape[:2]
     print(f"Output: {ow}x{oh}")
@@ -113,68 +195,18 @@ def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default"):
     return output_path
 
 
-def inference_tiled(model, img, scale, tile_size, tile_pad=10, device="cuda"):
-    import math
-    import torch.nn.functional as F
-    import numpy as np
-
-    img_t = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-    h, w = img_t.shape[2:]
-
-    if h * w < tile_size * tile_size:
-        with torch.no_grad():
-            out = model(img_t)
-        out = out.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy() * 255.0
-        return out.astype(np.uint8)[:, :, ::-1]
-
-    oh, ow = h * scale, w * scale
-    output = torch.zeros(1, 3, oh, ow, device=device)
-
-    tile_h = min(tile_size, h)
-    tile_w = min(tile_size, w)
-
-    for y in range(0, h, tile_h):
-        for x in range(0, w, tile_w):
-            y0 = max(0, y - tile_pad)
-            y1 = min(h, y + tile_h + tile_pad)
-            x0 = max(0, x - tile_pad)
-            x1 = min(w, x + tile_w + tile_pad)
-
-            tile_in = img_t[:, :, y0:y1, x0:x1]
-            with torch.no_grad():
-                tile_out = model(tile_in)
-
-            out_h = tile_out.shape[2]
-            out_w = tile_out.shape[3]
-
-            sy0 = (y - y0) * scale
-            sy1 = sy0 + min(tile_h, h - y) * scale
-            sx0 = (x - x0) * scale
-            sx1 = sx0 + min(tile_w, w - x) * scale
-
-            output[:, :, y * scale:y * scale + min(tile_h, h - y) * scale,
-                   x * scale:x * scale + min(tile_w, w - x) * scale] = tile_out[:, :, sy0:sy1, sx0:sx1]
-
-    out = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy() * 255.0
-    return out.astype(np.uint8)[:, :, ::-1]
-
-
 def main():
     parser = argparse.ArgumentParser(description="Real-ESRGAN Upscaler")
     parser.add_argument("--image", "-i", help="Image path or URL")
     parser.add_argument("--output", "-o", default=None, help="Output path")
-    parser.add_argument("--scale", "-s", type=float, default=4, help="Scale factor (default: 4)")
+    parser.add_argument("--scale", "-s", type=float, default=4, help="Scale factor")
     parser.add_argument("--tile", "-t", type=int, default=0, help="Tile size (0=auto)")
-    parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()),
-                        help="Model to use")
+    parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()))
     args = parser.parse_args()
 
     if args.image is None:
         print("Usage: python run.py -i <image> -o output.png -s 4 -m <model>")
-        print()
-        print("Available models:")
-        for k, v in MODELS.items():
-            print(f"  {k}: {v['desc']}")
+        print("Models:", ", ".join(f"{k} ({v['desc']})" for k, v in MODELS.items()))
         return
 
     image_path = args.image
@@ -182,7 +214,7 @@ def main():
         tmp = tempfile.mkdtemp()
         ext = os.path.splitext(image_path.split("/")[-1])[1] or ".png"
         local_path = os.path.join(tmp, f"input{ext}")
-        print(f"Downloading image from {image_path}...")
+        print(f"Downloading image...")
         urllib.request.urlretrieve(image_path, local_path)
         image_path = local_path
 
