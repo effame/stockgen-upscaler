@@ -190,7 +190,7 @@ def inference_tiled(model, img_bgr, scale, tile_size=400, tile_pad=10):
     return result
 
 
-def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default"):
+def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default", fmt="png", quality=92):
     if model_key not in MODELS:
         raise ValueError(f"Unknown model: {model_key}")
 
@@ -222,9 +222,15 @@ def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default"):
 
     if output_path is None:
         out_dir = tempfile.mkdtemp()
-        output_path = os.path.join(out_dir, "output.png")
+        output_path = os.path.join(out_dir, f"output.{fmt}")
 
-    cv2.imwrite(output_path, output)
+    params = []
+    if fmt == "jpg":
+        params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+    else:
+        params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+
+    cv2.imwrite(output_path, output, params)
     print(f"Saved: {output_path}")
     return output_path
 
@@ -233,13 +239,15 @@ def main():
     parser = argparse.ArgumentParser(description="Real-ESRGAN Upscaler")
     parser.add_argument("--image", "-i", help="Image path or URL")
     parser.add_argument("--output", "-o", default=None, help="Output path")
-    parser.add_argument("--scale", "-s", type=float, default=4, help="Scale factor")
+    parser.add_argument("--scale", "-s", type=float, default=4, help="Scale factor (1-4)")
     parser.add_argument("--tile", "-t", type=int, default=0, help="Tile size (0=auto)")
     parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()))
+    parser.add_argument("--format", "-f", default="png", choices=["png", "jpg"], help="Output format")
+    parser.add_argument("--quality", "-q", type=int, default=92, help="JPEG quality (1-100, 92=default)")
     args = parser.parse_args()
 
     if args.image is None:
-        print("Usage: python run.py -i <image> -o output.png -s 4 -m <model>")
+        print("Usage: python run.py -i <image> -o output -s 2 -m default -f jpg -q 95")
         print("Models:", ", ".join(f"{k} ({v['desc']})" for k, v in MODELS.items()))
         return
 
@@ -252,7 +260,7 @@ def main():
         urllib.request.urlretrieve(image_path, local_path)
         image_path = local_path
 
-    upscale(image_path, args.scale, args.tile, args.output, args.model)
+    upscale(image_path, args.scale, args.tile, args.output, args.model, args.format, args.quality)
 
 
 if __name__ == "__main__":
