@@ -183,7 +183,15 @@ def load_model(model_path, device):
 
     scale = detect_scale_from_checkpoint(state)
 
-    model = RRDBNet(scale=scale)
+    # Detect input channels from checkpoint
+    for key in state:
+        if "conv_first.weight" in key:
+            in_nc = state[key].shape[1]
+            break
+    else:
+        in_nc = 3
+
+    model = RRDBNet(in_nc=in_nc, scale=scale)
     new_state = OrderedDict()
     for k, v in state.items():
         new_state[k[7:] if k.startswith("module.") else k] = v
@@ -201,6 +209,12 @@ def inference_tiled(model, img_bgr, tile_size=400, tile_pad=10):
     img_t = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0) / 255.0
     device = next(model.parameters()).device
     img_t = img_t.to(device)
+
+    # x2 models use pixel_unshuffle: reduce spatial, increase channels
+    if model.conv_first.in_channels == 12:
+        img_t = F.pixel_unshuffle(img_t, 2)  # [1, 12, H/2, W/2]
+        h //= 2
+        w //= 2
 
     scale = model.scale
     oh, ow = h * scale, w * scale
