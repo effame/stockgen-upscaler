@@ -13,7 +13,7 @@ BIN_DIR = "/src/bin"
 class Predictor(BasePredictor):
     def setup(self):
         self.bin_path = os.path.join(BIN_DIR, "upscayl-bin")
-        self.model_path = os.path.join(MODEL_DIR, "high-fidelity-4x")
+        self.model_path = os.path.join(MODEL_DIR, "upscayl-standard-4x")
 
     def predict(
         self,
@@ -33,7 +33,7 @@ class Predictor(BasePredictor):
             "-i", str(image),
             "-o", str(out_path),
             "-m", self.model_path,
-            "-n", "high-fidelity-4x",
+            "-n", "upscayl-standard-4x",
             "-s", str(scale),
             "-z",
         ]
