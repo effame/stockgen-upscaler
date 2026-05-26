@@ -1,9 +1,9 @@
-name: Test
+name: Check
 on:
   push:
   workflow_dispatch:
 jobs:
-  test:
+  t:
     runs-on: ubuntu-latest
     steps:
-      - run: echo hello world
+      - run: echo "ok"
