@@ -103,11 +103,38 @@ def download_weights(url, dest):
         print("Done.")
 
 
+def _remap_ultrasharp_key(k):
+    """Remap 4x-UltraSharp/NMKD key format to standard RRDBNet keys."""
+    inner = k[6:]  # strip "model."
+    if inner.startswith("0."):
+        return "conv_first." + inner[2:]
+    if inner.startswith("1.sub."):
+        sub_inner = inner[6:]
+        dot = sub_inner.find(".")
+        block_idx = int(sub_inner[:dot])
+        rest = sub_inner[dot + 1:]
+        if block_idx < 23:
+            rest = rest.replace("RDB", "rdb").replace(".0", "")
+            return f"body.{block_idx}.{rest}"
+        if block_idx == 23:
+            return f"conv_body.{rest}"
+        return None
+    if inner.startswith("3."):
+        return "conv_up1." + inner[2:]
+    if inner.startswith("6."):
+        return "conv_up2." + inner[2:]
+    if inner.startswith("8."):
+        return "conv_hr." + inner[2:]
+    if inner.startswith("10."):
+        return "conv_last." + inner[2:]
+    return None  # skip non-parameter layers
+
+
 def load_model(model_path, device):
     model = RRDBNet()
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
 
-    for key in ["params", "params_ema", "state_dict", "model"]:
+    for key in ["params", "params_ema", "state_dict"]:
         if key in checkpoint:
             state = checkpoint[key]
             break
@@ -116,7 +143,14 @@ def load_model(model_path, device):
 
     new_state = OrderedDict()
     for k, v in state.items():
-        new_state[k[7:] if k.startswith("module.") else k] = v
+        if k.startswith("module."):
+            k = k[7:]
+        if k.startswith("model."):
+            mapped = _remap_ultrasharp_key(k)
+            if mapped is not None:
+                new_state[mapped] = v
+        else:
+            new_state[k] = v
 
     model.load_state_dict(new_state)
     model = model.to(device).eval()
