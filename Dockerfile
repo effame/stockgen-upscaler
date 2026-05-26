@@ -1,5 +1,7 @@
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
 
+# hadolint ignore=DL3008
+
 RUN pip install --no-cache-dir opencv-python-headless basicsr realesrgan runpod
 
 # Patch basicsr for torchvision >= 0.15
