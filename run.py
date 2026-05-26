@@ -1,8 +1,7 @@
 """
-Real-ESRGAN Image Upscaler — ไม่依赖 external libs นอกจาก torch + cv2
+Real-ESRGAN Image Upscaler
 """
 import argparse
-import math
 import os
 import tempfile
 from collections import OrderedDict
@@ -14,7 +13,7 @@ import torch.nn.functional as F
 import urllib.request
 
 
-# ─── RRDBNet architecture (copy from basicsr, no import needed) ───
+# ─── RRDBNet architecture ───
 
 class ResidualDenseBlock(nn.Module):
     def __init__(self, nf=64, gc=32):
@@ -104,8 +103,7 @@ def download_weights(url, dest):
 
 
 def _remap_ultrasharp_key(k):
-    """Remap 4x-UltraSharp/NMKD key format to standard RRDBNet keys."""
-    inner = k[6:]  # strip "model."
+    inner = k[6:]
     if inner.startswith("0."):
         return "conv_first." + inner[2:]
     if inner.startswith("1.sub."):
@@ -127,7 +125,7 @@ def _remap_ultrasharp_key(k):
         return "conv_hr." + inner[2:]
     if inner.startswith("10."):
         return "conv_last." + inner[3:]
-    return None  # skip non-parameter layers
+    return None
 
 
 def load_model(model_path, device):
@@ -158,14 +156,16 @@ def load_model(model_path, device):
 
 
 @torch.no_grad()
-def inference_tiled(model, img_bgr, scale, tile_size=400, tile_pad=10):
+def inference_tiled(model, img_bgr, tile_size=400, tile_pad=10):
     import numpy as np
     h, w = img_bgr.shape[:2]
-    img = img_bgr[:, :, ::-1].copy()  # BGR → RGB
+    img = img_bgr[:, :, ::-1].copy()
     img_t = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0) / 255.0
     device = next(model.parameters()).device
     img_t = img_t.to(device)
 
+    # Model is always 4x native
+    scale = 4
     oh, ow = h * scale, w * scale
     out = torch.zeros(1, 3, oh, ow, device=device)
     ts = min(tile_size, h // 2 + 1) * scale
@@ -179,18 +179,18 @@ def inference_tiled(model, img_bgr, scale, tile_size=400, tile_pad=10):
 
             patch = img_t[:, :, y0:y1, x0:x1]
             pred = model(patch)
-            pred = pred[:, :, :min(tile_size, h - y) * scale, :min(tile_size, w - x) * scale]
 
-            dy = pred.shape[2]
-            dx = pred.shape[3]
-            out[:, :, y * scale:y * scale + dy, x * scale:x * scale + dx] = pred
+            dy = min(tile_size, h - y) * scale
+            dx = min(tile_size, w - x) * scale
+            out[:, :, y * scale:y * scale + dy, x * scale:x * scale + dx] = pred[:, :, :dy, :dx]
 
     result = out.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy() * 255.0
-    result = result[:, :, ::-1].astype(np.uint8)  # RGB → BGR
+    result = result[:, :, ::-1].astype(np.uint8)
     return result
 
 
-def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default", fmt="png", quality=92):
+def upscale(image_path, scale=2, tile=0, output_path=None, model_key="default",
+            fmt="png", quality=92):
     if model_key not in MODELS:
         raise ValueError(f"Unknown model: {model_key}")
 
@@ -212,10 +212,18 @@ def upscale(image_path, scale=4, tile=0, output_path=None, model_key="default", 
 
     h, w = img.shape[:2]
     print(f"Input: {w}x{h}")
-    print(f"Upscaling x{scale}...")
 
+    # Model is always 4x native. Resize input to match desired output scale.
+    if scale != 4:
+        factor = scale / 4.0
+        new_w, new_h = int(w * factor + 0.5), int(h * factor + 0.5)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        h, w = new_h, new_w
+        print(f"Resized input → {w}x{h} for x{scale} output")
+
+    print(f"Upscaling 4x...")
     t = tile or 400
-    output = inference_tiled(model, img, scale, tile_size=t)
+    output = inference_tiled(model, img, tile_size=t)
 
     oh, ow = output.shape[:2]
     print(f"Output: {ow}x{oh}")
@@ -239,15 +247,15 @@ def main():
     parser = argparse.ArgumentParser(description="Real-ESRGAN Upscaler")
     parser.add_argument("--image", "-i", help="Image path or URL")
     parser.add_argument("--output", "-o", default=None, help="Output path")
-    parser.add_argument("--scale", "-s", type=float, default=2, help="Scale factor (1-4)")
+    parser.add_argument("--scale", "-s", type=float, default=2, help="Output scale (1-4)")
     parser.add_argument("--tile", "-t", type=int, default=0, help="Tile size (0=auto)")
     parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()))
     parser.add_argument("--format", "-f", default="png", choices=["png", "jpg"], help="Output format")
-    parser.add_argument("--quality", "-q", type=int, default=92, help="JPEG quality (1-100, 92=default)")
+    parser.add_argument("--quality", "-q", type=int, default=92, help="JPEG quality (1-100)")
     args = parser.parse_args()
 
     if args.image is None:
-        print("Usage: python run.py -i <image> -o output -s 2 -m default -f jpg -q 95")
+        print("Usage: python run.py -i <image> -o output -s 2 -m default")
         print("Models:", ", ".join(f"{k} ({v['desc']})" for k, v in MODELS.items()))
         return
 
@@ -260,7 +268,8 @@ def main():
         urllib.request.urlretrieve(image_path, local_path)
         image_path = local_path
 
-    upscale(image_path, args.scale, args.tile, args.output, args.model, args.format, args.quality)
+    upscale(image_path, args.scale, args.tile, args.output, args.model,
+            args.format, args.quality)
 
 
 if __name__ == "__main__":
