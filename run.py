@@ -49,13 +49,22 @@ class RRDB(nn.Module):
 
 
 class RRDBNet(nn.Module):
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32):
+    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32, scale=4):
         super().__init__()
+        self.scale = scale
         self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1)
         self.body = nn.ModuleList([RRDB(nf, gc) for _ in range(nb)])
         self.conv_body = nn.Conv2d(nf, nf, 3, 1, 1)
-        self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
-        self.conv_up2 = nn.Conv2d(nf, nf, 3, 1, 1)
+
+        if scale == 4:
+            self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
+            self.conv_up2 = nn.Conv2d(nf, nf, 3, 1, 1)
+        elif scale == 2:
+            self.conv_up1 = nn.Conv2d(nf, nf, 3, 1, 1)
+            self.conv_up2 = None
+        else:
+            raise ValueError(f"Unsupported scale: {scale}")
+
         self.conv_hr = nn.Conv2d(nf, nf, 3, 1, 1)
         self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1)
         self.lrelu = nn.LeakyReLU(0.2, inplace=True)
@@ -65,27 +74,40 @@ class RRDBNet(nn.Module):
         for block in self.body:
             feat = block(feat)
         feat = self.conv_body(feat)
-        feat = self.lrelu(F.interpolate(feat, scale_factor=4, mode="nearest"))
-        feat = self.lrelu(self.conv_up1(feat))
-        feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
-        feat = self.lrelu(self.conv_up2(feat))
+
+        if self.scale == 4:
+            feat = self.lrelu(F.interpolate(feat, scale_factor=4, mode="nearest"))
+            feat = self.lrelu(self.conv_up1(feat))
+            feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
+            feat = self.lrelu(self.conv_up2(feat))
+        elif self.scale == 2:
+            feat = self.lrelu(F.interpolate(feat, scale_factor=2, mode="nearest"))
+            feat = self.lrelu(self.conv_up1(feat))
+
         out = self.conv_last(self.lrelu(self.conv_hr(feat)))
         return out
 
 
 # ─── Model registry ───
 
-MODELS = {
-    "default": {
-        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-        "file": "RealESRGAN_x4plus.pth",
-        "desc": "Real-ESRGAN x4plus (สมดุลทั่วไป)",
-    },
-    "ultrasharp": {
-        "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
-        "file": "4x-UltraSharp.pth",
-        "desc": "4x-UltraSharp (คมชัด, ภาพคน, ผลิตภัณฑ์)",
-    },
+MODELS = OrderedDict()
+MODELS["x2plus"] = {
+    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x2plus.pth",
+    "file": "RealESRGAN_x2plus.pth",
+    "scale": 2,
+    "desc": "Real-ESRGAN x2plus (2x, ไฟล์เล็กลง 4x)",
+}
+MODELS["x4plus"] = {
+    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+    "file": "RealESRGAN_x4plus.pth",
+    "scale": 4,
+    "desc": "Real-ESRGAN x4plus (4x, คุณภาพสูงสุด)",
+}
+MODELS["ultrasharp"] = {
+    "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
+    "file": "4x-UltraSharp.pth",
+    "scale": 4,
+    "desc": "4x-UltraSharp (4x, คมชัด)",
 }
 
 
@@ -100,6 +122,13 @@ def download_weights(url, dest):
                 os.remove(dest)
             raise
         print("Done.")
+
+
+def detect_scale_from_checkpoint(state_dict):
+    for k in state_dict.keys():
+        if "conv_up2" in k:
+            return 4
+    return 2
 
 
 def _remap_ultrasharp_key(k):
@@ -129,7 +158,6 @@ def _remap_ultrasharp_key(k):
 
 
 def load_model(model_path, device):
-    model = RRDBNet()
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
 
     for key in ["params", "params_ema", "state_dict"]:
@@ -139,16 +167,26 @@ def load_model(model_path, device):
     else:
         state = checkpoint
 
-    new_state = OrderedDict()
-    for k, v in state.items():
-        if k.startswith("module."):
-            k = k[7:]
-        if k.startswith("model."):
+    # Check if this is ultrasharp-style format
+    first_key = next(iter(state.keys()))
+    is_ultrasharp = first_key.startswith("model.")
+
+    if is_ultrasharp:
+        remapped = OrderedDict()
+        for k, v in state.items():
+            if k.startswith("module."):
+                k = k[7:]
             mapped = _remap_ultrasharp_key(k)
             if mapped is not None:
-                new_state[mapped] = v
-        else:
-            new_state[k] = v
+                remapped[mapped] = v
+        state = remapped
+
+    scale = detect_scale_from_checkpoint(state)
+
+    model = RRDBNet(scale=scale)
+    new_state = OrderedDict()
+    for k, v in state.items():
+        new_state[k[7:] if k.startswith("module.") else k] = v
 
     model.load_state_dict(new_state)
     model = model.to(device).eval()
@@ -164,8 +202,7 @@ def inference_tiled(model, img_bgr, tile_size=400, tile_pad=10):
     device = next(model.parameters()).device
     img_t = img_t.to(device)
 
-    # Model is always 4x native
-    scale = 4
+    scale = model.scale
     oh, ow = h * scale, w * scale
     out = torch.zeros(1, 3, oh, ow, device=device)
     ts = min(tile_size, h // 2 + 1) * scale
@@ -189,7 +226,7 @@ def inference_tiled(model, img_bgr, tile_size=400, tile_pad=10):
     return result
 
 
-def upscale(image_path, tile=0, output_path=None, model_key="default",
+def upscale(image_path, tile=0, output_path=None, model_key="x2plus",
             fmt="png", quality=92):
     if model_key not in MODELS:
         raise ValueError(f"Unknown model: {model_key}")
@@ -212,7 +249,8 @@ def upscale(image_path, tile=0, output_path=None, model_key="default",
 
     h, w = img.shape[:2]
     print(f"Input: {w}x{h}")
-    print(f"Upscaling 4x...")
+    scale = model.scale
+    print(f"Upscaling x{scale}...")
     t = tile or 400
     output = inference_tiled(model, img, tile_size=t)
 
@@ -239,13 +277,13 @@ def main():
     parser.add_argument("--image", "-i", help="Image path or URL")
     parser.add_argument("--output", "-o", default=None, help="Output path (no extension)")
     parser.add_argument("--tile", "-t", type=int, default=0, help="Tile size (0=auto)")
-    parser.add_argument("--model", "-m", default="default", choices=list(MODELS.keys()))
+    parser.add_argument("--model", "-m", default="x2plus", choices=list(MODELS.keys()))
     parser.add_argument("--format", "-f", default="png", choices=["png", "jpg"], help="Output format")
     parser.add_argument("--quality", "-q", type=int, default=92, help="JPEG quality (1-100)")
     args = parser.parse_args()
 
     if args.image is None:
-        print("Usage: python run.py -i <image> -o output -m default -f jpg -q 95")
+        print("Usage: python run.py -i <image> -o output -m x2plus -f jpg")
         print("Models:", ", ".join(f"{k} ({v['desc']})" for k, v in MODELS.items()))
         return
 
