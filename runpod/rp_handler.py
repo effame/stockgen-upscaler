@@ -62,15 +62,61 @@ def load_upsampler(model_key):
         print(f"Downloading {cfg['file']}...")
         urllib.request.urlretrieve(cfg["url"], dest)
         
-    # ─── 🩹 Patch: Auto-convert state dict for community models like 4x-UltraSharp to fix KeyError: 'params' ───
+    # ─── 🩹 Patch: Auto-convert state dict for community models like 4x-UltraSharp to fix KeyError: 'params' and architecture mismatch ───
     try:
         loadnet = torch.load(dest, map_location="cpu")
-        if "params" not in loadnet and "params_ema" not in loadnet:
-            print(f"🩹 Auto-converting community model {model_key} state dict to fit RealESRGANer structure...")
-            torch.save({"params": loadnet}, dest)
-            print("✅ Successfully reformatted and saved weights wrapper!")
+        
+        # Determine the source state dict
+        if "params" in loadnet:
+            state_dict = loadnet["params"]
+        elif "params_ema" in loadnet:
+            state_dict = loadnet["params_ema"]
+        else:
+            state_dict = loadnet
+            
+        # Detect if it's using classic ESRGAN keys (e.g. model.0.weight)
+        is_classic_esrgan = any(k.startswith("model.0.") for k in state_dict.keys())
+        if is_classic_esrgan:
+            print(f"🩹 Classic ESRGAN keys detected in {model_key}. Converting state dict to match RRDBNet structure...")
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                if k.startswith("model.0."):
+                    new_k = k.replace("model.0.", "conv_first.")
+                elif k.startswith("model.1.sub."):
+                    # Parse block index to identify the conv_body layer
+                    parts = k.split(".")
+                    try:
+                        block_idx = int(parts[3])
+                        if block_idx == cfg["num_block"]:
+                            new_k = k.replace(f"model.1.sub.{block_idx}.", "conv_body.")
+                        else:
+                            new_k = k.replace("model.1.sub.", "body.")
+                            new_k = new_k.replace(".RDB", ".rdb")
+                            new_k = new_k.replace(".conv1.0.", ".conv1.")
+                            new_k = new_k.replace(".conv2.0.", ".conv2.")
+                            new_k = new_k.replace(".conv3.0.", ".conv3.")
+                            new_k = new_k.replace(".conv4.0.", ".conv4.")
+                            new_k = new_k.replace(".conv5.0.", ".conv5.")
+                    except ValueError:
+                        new_k = k
+                elif k.startswith("model.3."):
+                    new_k = k.replace("model.3.", "conv_up1.")
+                elif k.startswith("model.6."):
+                    new_k = k.replace("model.6.", "conv_up2.")
+                elif k.startswith("model.8."):
+                    new_k = k.replace("model.8.", "conv_hr.")
+                elif k.startswith("model.10."):
+                    new_k = k.replace("model.10.", "conv_last.")
+                else:
+                    new_k = k
+                new_state_dict[new_k] = v
+            state_dict = new_state_dict
+            
+        # Re-save with 'params' key as expected by RealESRGANer
+        torch.save({"params": state_dict}, dest)
+        print(f"✅ Successfully converted and wrapped weights for {model_key}!")
     except Exception as e:
-        print(f"⚠️ Warning checking state dict for community model: {str(e)}")
+        print(f"⚠️ Warning checking state dict for model {model_key}: {str(e)}")
         
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=cfg["num_block"], num_grow_ch=32, scale=cfg["scale"])
     return RealESRGANer(
@@ -84,8 +130,9 @@ def load_upsampler(model_key):
     )
 
 
-# Preload all upscale models at cold start to maximize speed
-upsamplers = {key: load_upsampler(key) for key in MODELS}
+# Lazy loading containers
+upsamplers = {}
+face_enhancers = {}
 
 # Preload GFPGAN (Face Enhancement) models mapped by upscale scales to avoid inference latency
 GFPGAN_PATH = os.path.join(WEIGHTS_DIR, "GFPGANv1.3.pth")
@@ -105,12 +152,17 @@ def load_face_enhancer(scale, upsampler):
         bg_upsampler=upsampler
     )
 
-# Establish dynamic preloaded face enhancers mapped to each upscale model
-face_enhancers = {}
-for key, upsampler in upsamplers.items():
-    s = MODELS[key]["scale"]
-    print(f"Preloading face enhancer (GFPGAN) for model {key} with scale {s}...")
-    face_enhancers[key] = load_face_enhancer(s, upsampler)
+def get_upsampler_lazy(model_key):
+    if model_key not in upsamplers:
+        print(f"🚀 Lazy loading upsampler for model: {model_key}...")
+        upsamplers[model_key] = load_upsampler(model_key)
+    return upsamplers[model_key]
+
+def get_face_enhancer_lazy(model_key, scale, upsampler):
+    if model_key not in face_enhancers:
+        print(f"🎭 Lazy loading face enhancer for model: {model_key}...")
+        face_enhancers[model_key] = load_face_enhancer(scale, upsampler)
+    return face_enhancers[model_key]
 
 
 def handler(job):
@@ -162,12 +214,12 @@ def handler(job):
     if img is None:
         return {"error": "Could not decode or load image from provided source"}
 
-    upsampler = upsamplers.get(model_name, upsamplers["x2plus"])
+    upsampler = get_upsampler_lazy(model_name)
     s = MODELS[model_name]["scale"]
 
     # Process based on face enhancement flag
     if face_enhance:
-        face_enhancer = face_enhancers.get(model_name, face_enhancers["x2plus"])
+        face_enhancer = get_face_enhancer_lazy(model_name, s, upsampler)
         print(f"Processing with GFPGAN (Face Enhancement) using model {model_name}...")
         if bgr:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
