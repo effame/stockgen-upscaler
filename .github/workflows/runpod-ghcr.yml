@@ -36,7 +36,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./runpod
-          file: ./runpod/Dockerfile
           push: true
           tags: ghcr.io/effame/stockgen-upscaler:latest
           cache-from: type=gha
