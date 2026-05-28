@@ -4,7 +4,7 @@ FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies including GFPGAN for face enhancement
-RUN pip install --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod
+RUN pip install --break-system-packages --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod
 
 # Patch basicsr without importing it (compatibility patch for newer PyTorch/torchvision)
 RUN python -c "\
