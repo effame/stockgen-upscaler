@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
 # System deps for opencv
 RUN apt-get update && apt-get install -y libxcb1 libgl1-mesa-glx libglib2.0-0 && rm -rf /var/lib/apt/lists/*
