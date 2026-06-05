@@ -1,7 +1,6 @@
 import os
 import sys
 import base64
-import tempfile
 import urllib.request
 
 import cv2
@@ -186,14 +185,14 @@ def handler(job):
         model_name = "x4plus"
 
     # Process input image
-    tmp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(tmp_dir, "input_img.png")
+    img = None
 
     if isinstance(image_source, str) and (image_source.startswith("http://") or image_source.startswith("https://")):
         print(f"📥 [Web Fetch] Downloading image from URL: {image_source}")
         try:
-            urllib.request.urlretrieve(image_source, input_path)
-            img = cv2.imread(input_path, cv2.IMREAD_COLOR)
+            with urllib.request.urlopen(image_source) as response:
+                img_array = np.frombuffer(response.read(), np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         except Exception as e:
             return {"error": f"Failed to download image from URL: {str(e)}"}
     elif isinstance(image_source, str) and os.path.exists(image_source):
@@ -236,11 +235,12 @@ def handler(job):
         else:
             output, _ = upsampler.enhance(img, outscale=s)
 
-    out_path = os.path.join(tmp_dir, "output.jpg")
-    cv2.imwrite(out_path, output, [cv2.IMWRITE_JPEG_QUALITY, 95])
-
-    with open(out_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
+    # Encode output directly to Base64 in-memory
+    success, encoded_img = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not success:
+        return {"error": "Failed to encode output image"}
+    
+    b64 = base64.b64encode(encoded_img).decode("utf-8")
 
     h, w = img.shape[:2]
     oh, ow = output.shape[:2]
