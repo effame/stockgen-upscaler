@@ -20,19 +20,25 @@ def get_s3_client():
         secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
         endpoint = os.environ.get("R2_ENDPOINT")
         if all([access_key, secret_key, endpoint]):
-            s3_client = boto3.client(
-                "s3",
-                endpoint_url=endpoint,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                config=Config(signature_version="s3v4"),
-                region_name="auto",
-            )
+            try:
+                from botocore.config import Config
+                s3_client = boto3.client(
+                    "s3",
+                    endpoint_url=endpoint,
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                    config=Config(signature_version="s3v4"),
+                    region_name="auto",
+                )
+                print("✅ [R2] S3 Client initialized successfully.")
+            except Exception as e:
+                print(f"❌ [R2] Failed to initialize S3 Client: {str(e)}")
     return s3_client
 
 def upload_to_r2(buffer, key, content_type="image/jpeg"):
     client = get_s3_client()
     if client is None:
+        print("❌ [R2] Upload failed: S3 Client is None (check Env Vars)")
         return None
     
     bucket = os.environ.get("R2_BUCKET_NAME", "stockgen-ai")
@@ -47,9 +53,10 @@ def upload_to_r2(buffer, key, content_type="image/jpeg"):
         custom_domain = os.environ.get("R2_CUSTOM_DOMAIN")
         if custom_domain:
             return f"{custom_domain.rstrip('/')}/{key}"
-        return f"{os.environ.get('R2_ENDPOINT').rstrip('/')}/{bucket}/{key}"
+        endpoint = os.environ.get('R2_ENDPOINT', '').rstrip('/')
+        return f"{endpoint}/{bucket}/{key}"
     except Exception as e:
-        print(f"❌ R2 Upload Failed: {str(e)}")
+        print(f"❌ [R2] Upload Error: {str(e)}")
         return None
 
 # Patch basicsr compatibility with newer PyTorch/torchvision
