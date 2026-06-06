@@ -1,13 +1,56 @@
 import os
 import sys
 import base64
-import tempfile
 import urllib.request
+import boto3
+from botocore.config import Config
 
 import cv2
 import numpy as np
 import torch
 import runpod
+
+# Initialize S3 client for R2 (Lazy)
+s3_client = None
+
+def get_s3_client():
+    global s3_client
+    if s3_client is None:
+        access_key = os.environ.get("R2_ACCESS_KEY_ID")
+        secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
+        endpoint = os.environ.get("R2_ENDPOINT")
+        if all([access_key, secret_key, endpoint]):
+            s3_client = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                config=Config(signature_version="s3v4"),
+                region_name="auto",
+            )
+    return s3_client
+
+def upload_to_r2(buffer, key, content_type="image/jpeg"):
+    client = get_s3_client()
+    if client is None:
+        return None
+    
+    bucket = os.environ.get("R2_BUCKET_NAME", "stockgen-ai")
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=buffer,
+            ContentType=content_type,
+            CacheControl="public, max-age=31536000"
+        )
+        custom_domain = os.environ.get("R2_CUSTOM_DOMAIN")
+        if custom_domain:
+            return f"{custom_domain.rstrip('/')}/{key}"
+        return f"{os.environ.get('R2_ENDPOINT').rstrip('/')}/{bucket}/{key}"
+    except Exception as e:
+        print(f"❌ R2 Upload Failed: {str(e)}")
+        return None
 
 # Patch basicsr compatibility with newer PyTorch/torchvision
 import torchvision.transforms.functional as F_tv
@@ -186,23 +229,26 @@ def handler(job):
         model_name = "x4plus"
 
     # Process input image
-    tmp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(tmp_dir, "input_img.png")
+    img = None
 
     if isinstance(image_source, str) and (image_source.startswith("http://") or image_source.startswith("https://")):
         print(f"📥 [Web Fetch] Downloading image from URL: {image_source}")
+        runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "📥 กำลังดาวน์โหลดรูปภาพต้นฉบับ..."})
         try:
-            urllib.request.urlretrieve(image_source, input_path)
-            img = cv2.imread(input_path, cv2.IMREAD_COLOR)
+            with urllib.request.urlopen(image_source) as response:
+                img_array = np.frombuffer(response.read(), np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         except Exception as e:
             return {"error": f"Failed to download image from URL: {str(e)}"}
     elif isinstance(image_source, str) and os.path.exists(image_source):
         print(f"📂 [Local Load] Loading local image file: {image_source}")
+        runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "📂 กำลังโหลดรูปภาพจากระบบ..."})
         img = cv2.imread(image_source, cv2.IMREAD_COLOR)
     else:
         # Decode base64 representation
         try:
             print("🔑 [Base64 Decode] Decoding input image from base64 string...")
+            runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "🔑 กำลังประมวลผลข้อมูลภาพ..."})
             if isinstance(image_source, str) and "," in image_source:
                 image_source = image_source.split(",")[1]
             img_data = base64.b64decode(image_source)
@@ -221,6 +267,7 @@ def handler(job):
     if face_enhance:
         face_enhancer = get_face_enhancer_lazy(model_name, s, upsampler)
         print(f"Processing with GFPGAN (Face Enhancement) using model {model_name}...")
+        runpod.serverless.progress_update(job, {"progress": 30, "statusMessage": "🎭 กำลังปรับปรุงใบหน้าและขยายขนาดภาพ..."})
         if bgr:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             _, _, output = face_enhancer.enhance(img_rgb, has_aligned=False, only_center_face=False, paste_back=True)
@@ -229,6 +276,7 @@ def handler(job):
             _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
     else:
         print(f"Processing normal upscale with model {model_name}...")
+        runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": "🚀 AI กำลังขยายขนาดรูปภาพความละเอียดสูง..."})
         if bgr:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             output, _ = upsampler.enhance(img_rgb, outscale=s)
@@ -236,17 +284,31 @@ def handler(job):
         else:
             output, _ = upsampler.enhance(img, outscale=s)
 
-    out_path = os.path.join(tmp_dir, "output.jpg")
-    cv2.imwrite(out_path, output, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    # Encode output directly to Base64 in-memory
+    success, encoded_img = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not success:
+        return {"error": "Failed to encode output image"}
+    
+    # Direct-to-R2 Upload Logic
+    r2_url = None
+    r2_key = job_input.get("r2_key") # Target path like "users/uid/batches/bid/jid.jpg"
+    
+    if r2_key:
+        print(f"☁️ [Direct-to-R2] Uploading result to: {r2_key}")
+        runpod.serverless.progress_update(job, {"progress": 85, "statusMessage": "☁️ กำลังส่งไฟล์ไปยัง Cloudflare R2..."})
+        r2_url = upload_to_r2(encoded_img.tobytes(), r2_key)
+        if r2_url:
+            print(f"✅ [Direct-to-R2] Success: {r2_url}")
+            runpod.serverless.progress_update(job, {"progress": 95, "statusMessage": "✅ อัปโหลดสำเร็จ กำลังปิดงาน..."})
 
-    with open(out_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
+    b64 = base64.b64encode(encoded_img).decode("utf-8")
 
     h, w = img.shape[:2]
     oh, ow = output.shape[:2]
 
     return {
-        "image": b64,
+        "image": b64 if not r2_url else None, # Skip Base64 if R2 success to save bandwidth
+        "r2_url": r2_url,
         "image_format": "jpg",
         "model": model_name,
         "face_enhance_applied": face_enhance,
