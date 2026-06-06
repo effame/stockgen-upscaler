@@ -308,13 +308,18 @@ def handler(job):
             print(f"✅ [Direct-to-R2] Success: {r2_url}")
             runpod.serverless.progress_update(job, {"progress": 95, "statusMessage": "✅ อัปโหลดสำเร็จ กำลังปิดงาน..."})
 
-    b64 = base64.b64encode(encoded_img).decode("utf-8")
+    # 🚀 OPTIMIZATION: Skip Base64 if R2 upload is successful to prevent worker hanging/memory bloat
+    b64 = None
+    if not r2_url:
+        print("📥 [Fallback] R2 failed or not requested, encoding Base64...")
+        b64 = base64.b64encode(encoded_img).decode("utf-8")
 
     h, w = img.shape[:2]
     oh, ow = output.shape[:2]
 
+    print("🏁 [Final] Job processed successfully. Returning results.")
     return {
-        "image": b64 if not r2_url else None, # Skip Base64 if R2 success to save bandwidth
+        "image": b64, # None if R2 success
         "r2_url": r2_url,
         "image_format": "jpg",
         "model": model_name,
@@ -326,4 +331,5 @@ def handler(job):
 
 
 if __name__ == "__main__":
+    print("--- Starting Serverless Worker | Version 1.9.4 ---")
     runpod.serverless.start({"handler": handler})
