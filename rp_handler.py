@@ -233,6 +233,7 @@ def handler(job):
 
     if isinstance(image_source, str) and (image_source.startswith("http://") or image_source.startswith("https://")):
         print(f"📥 [Web Fetch] Downloading image from URL: {image_source}")
+        runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "📥 กำลังดาวน์โหลดรูปภาพต้นฉบับ..."})
         try:
             with urllib.request.urlopen(image_source) as response:
                 img_array = np.frombuffer(response.read(), np.uint8)
@@ -241,11 +242,13 @@ def handler(job):
             return {"error": f"Failed to download image from URL: {str(e)}"}
     elif isinstance(image_source, str) and os.path.exists(image_source):
         print(f"📂 [Local Load] Loading local image file: {image_source}")
+        runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "📂 กำลังโหลดรูปภาพจากระบบ..."})
         img = cv2.imread(image_source, cv2.IMREAD_COLOR)
     else:
         # Decode base64 representation
         try:
             print("🔑 [Base64 Decode] Decoding input image from base64 string...")
+            runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "🔑 กำลังประมวลผลข้อมูลภาพ..."})
             if isinstance(image_source, str) and "," in image_source:
                 image_source = image_source.split(",")[1]
             img_data = base64.b64decode(image_source)
@@ -264,6 +267,7 @@ def handler(job):
     if face_enhance:
         face_enhancer = get_face_enhancer_lazy(model_name, s, upsampler)
         print(f"Processing with GFPGAN (Face Enhancement) using model {model_name}...")
+        runpod.serverless.progress_update(job, {"progress": 30, "statusMessage": "🎭 กำลังปรับปรุงใบหน้าและขยายขนาดภาพ..."})
         if bgr:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             _, _, output = face_enhancer.enhance(img_rgb, has_aligned=False, only_center_face=False, paste_back=True)
@@ -272,6 +276,7 @@ def handler(job):
             _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
     else:
         print(f"Processing normal upscale with model {model_name}...")
+        runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": "🚀 AI กำลังขยายขนาดรูปภาพความละเอียดสูง..."})
         if bgr:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             output, _ = upsampler.enhance(img_rgb, outscale=s)
@@ -290,9 +295,11 @@ def handler(job):
     
     if r2_key:
         print(f"☁️ [Direct-to-R2] Uploading result to: {r2_key}")
+        runpod.serverless.progress_update(job, {"progress": 85, "statusMessage": "☁️ กำลังส่งไฟล์ไปยัง Cloudflare R2..."})
         r2_url = upload_to_r2(encoded_img.tobytes(), r2_key)
         if r2_url:
             print(f"✅ [Direct-to-R2] Success: {r2_url}")
+            runpod.serverless.progress_update(job, {"progress": 95, "statusMessage": "✅ อัปโหลดสำเร็จ กำลังปิดงาน..."})
 
     b64 = base64.b64encode(encoded_img).decode("utf-8")
 
