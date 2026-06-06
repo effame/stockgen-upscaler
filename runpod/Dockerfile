@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 && rm -r
 # Install python dependencies including GFPGAN for face enhancement
 # Install python dependencies - pin torch to match base image so pip resolver avoids downloading duplicate CUDA bloat
 RUN pip install --break-system-packages --no-cache-dir torch==2.11.0 \
- && pip install --break-system-packages --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod
+ && pip install --break-system-packages --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod boto3 "numpy<2"
 
 # Patch basicsr without importing it (compatibility patch for newer PyTorch/torchvision)
 RUN python -c "\
