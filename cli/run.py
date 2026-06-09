@@ -65,7 +65,7 @@ def download_weights(url, dest):
 
 
 def upscale(image_path, tile=0, output_path=None, model_key="x2plus",
-            fmt="jpg", quality=95, bgr=False):
+            fmt="jpg", quality=95):
     if model_key not in MODELS:
         raise ValueError(f"Unknown model: {model_key}")
 
@@ -99,12 +99,7 @@ def upscale(image_path, tile=0, output_path=None, model_key="x2plus",
     h, w = img.shape[:2]
     print(f"Input: {w}x{h}")
 
-    if bgr:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        output, _ = upsampler.enhance(img, outscale=scale)
-        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
-    else:
-        output, _ = upsampler.enhance(img, outscale=scale)
+    output, _ = upsampler.enhance(img, outscale=scale)
 
     oh, ow = output.shape[:2]
     print(f"Output: {ow}x{oh}")
@@ -134,7 +129,6 @@ def main():
     parser.add_argument("--model", "-m", default="x2plus", choices=list(MODELS.keys()))
     parser.add_argument("--format", "-f", default="jpg", choices=["png", "jpg"], help="Output format")
     parser.add_argument("--quality", "-q", type=int, default=95, help="JPEG quality (1-100)")
-    parser.add_argument("--bgr", action="store_true", help="BGR model (skip color conversion)")
     args = parser.parse_args()
 
     if args.image is None:
@@ -152,7 +146,7 @@ def main():
         image_path = local_path
 
     upscale(image_path, args.tile, args.output, args.model,
-            args.format, args.quality, args.bgr)
+            args.format, args.quality)
 
 
 if __name__ == "__main__":

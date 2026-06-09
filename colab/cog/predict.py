@@ -86,7 +86,6 @@ class Predictor(BasePredictor):
             choices=list(MODELS.keys()),
         ),
         tile: int = Input(description="Tile size (0=auto)", default=0, ge=0, le=1024),
-        bgr: bool = Input(description="BGR model (skip color conversion)", default=False),
     ) -> Path:
         img = cv2.imread(str(image), cv2.IMREAD_COLOR)
         if img is None:
@@ -97,12 +96,7 @@ class Predictor(BasePredictor):
             upsampler.tile_size = tile
 
         s = MODELS[model]["scale"]
-        if bgr:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            output, _ = upsampler.enhance(img, outscale=s)
-            output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
-        else:
-            output, _ = upsampler.enhance(img, outscale=s)
+        output, _ = upsampler.enhance(img, outscale=s)
 
         out_dir = Path(tempfile.mkdtemp())
         out_path = out_dir / "output.jpg"
