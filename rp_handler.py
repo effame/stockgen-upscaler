@@ -11,6 +11,9 @@ import torch
 import runpod
 from PIL import Image
 
+if torch.cuda.is_available():
+    torch.set_float32_matmul_precision("high")
+
 # ---------------------------------------------------------------------------
 # S3 (Cloudflare R2) — lazy init
 # ---------------------------------------------------------------------------
@@ -232,13 +235,21 @@ def load_face_enhancer(scale, upsampler):
             "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth",
             GFPGAN_PATH,
         )
-    return GFPGANer(
+    enhancer = GFPGANer(
         model_path=GFPGAN_PATH,
         upscale=scale,
         arch="clean",
         channel_multiplier=2,
         bg_upsampler=upsampler,
     )
+    if torch.cuda.is_available():
+        enhancer.gfpgan.half()
+        enhancer.arcface.half()
+        orig_forward = enhancer.gfpgan.forward
+        def half_forward(x):
+            return orig_forward(x.half()).float()
+        enhancer.gfpgan.forward = half_forward
+    return enhancer
 
 
 _upsamplers = {}
