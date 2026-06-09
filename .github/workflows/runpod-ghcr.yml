@@ -35,8 +35,10 @@ jobs:
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: ./runpod
+          context: .
           push: true
-          tags: ghcr.io/effame/stockgen-upscaler:latest
+          tags: |
+            ghcr.io/effame/stockgen-upscaler:latest
+            ghcr.io/effame/stockgen-upscaler:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
