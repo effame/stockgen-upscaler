@@ -101,7 +101,7 @@ MODELS = {
     },
 }
 
-WEIGHTS_DIR = "/weights"
+WEIGHTS_DIR = "/workspace/weights"
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
 
