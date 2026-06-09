@@ -244,7 +244,8 @@ def load_face_enhancer(scale, upsampler):
     )
     if torch.cuda.is_available():
         enhancer.gfpgan.half()
-        enhancer.arcface.half()
+        if hasattr(enhancer, "arcface"):
+            enhancer.arcface.half()
         orig_forward = enhancer.gfpgan.forward
         def half_forward(x):
             return orig_forward(x.half()).float()
