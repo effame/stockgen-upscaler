@@ -2,6 +2,7 @@ import os
 import sys
 import base64
 import urllib.request
+import requests
 import boto3
 from botocore.config import Config
 
@@ -242,9 +243,11 @@ def handler(job):
         print(f"📥 [Web Fetch] Downloading image from URL: {image_source}")
         runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "📥 กำลังดาวน์โหลดรูปภาพต้นฉบับ..."})
         try:
-            with urllib.request.urlopen(image_source) as response:
-                img_array = np.frombuffer(response.read(), np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            headers = {"User-Agent": "StockGen-AI/1.0 (upscaler)"}
+            resp = requests.get(image_source, headers=headers, timeout=30)
+            resp.raise_for_status()
+            img_array = np.frombuffer(resp.content, np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         except Exception as e:
             return {"error": f"Failed to download image from URL: {str(e)}"}
     elif isinstance(image_source, str) and os.path.exists(image_source):
