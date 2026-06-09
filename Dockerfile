@@ -45,4 +45,5 @@ COPY rp_handler.py /rp_handler.py
 # Without a network volume the worker falls back to downloading weights from R2 at cold start.
 ENV WEIGHTS_DIR=/workspace/weights
 
+# Build-time marker: trigger re-build on push
 CMD ["python", "-u", "/rp_handler.py"]
