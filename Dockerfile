@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 && rm -r
 
 # Install python dependencies - pin torch to match base image so pip resolver avoids downloading duplicate CUDA bloat
 RUN pip install --break-system-packages --no-cache-dir torch==2.11.0 \
- && pip install --break-system-packages --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod
+ && pip install --break-system-packages --no-cache-dir opencv-python-headless basicsr realesrgan gfpgan runpod boto3 "numpy<2"
 
 # Patch basicsr without importing it (compatibility patch for newer PyTorch/torchvision)
 RUN python -c "\
@@ -18,19 +18,6 @@ content = content.replace(\
   'from torchvision.transforms.functional import rgb_to_grayscale');\
 open(path, 'w').write(content);\
 print('Patched:', path)\
-"
-
-# Pre-download core upscale and face enhancement weights so cold start is fast
-RUN mkdir -p /weights && python -c "\
-import urllib.request;\
-print('Downloading Real-ESRGAN weights...');\
-urllib.request.urlretrieve('https://huggingface.co/nateraw/real-esrgan/resolve/main/RealESRGAN_x2plus.pth', '/weights/RealESRGAN_x2plus.pth');\
-urllib.request.urlretrieve('https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth', '/weights/RealESRGAN_x4plus.pth');\
-urllib.request.urlretrieve('https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth', '/weights/4x-UltraSharp.pth');\
-urllib.request.urlretrieve('https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth', '/weights/RealESRGAN_x4plus_anime_6B.pth');\
-print('Downloading GFPGAN weights...');\
-urllib.request.urlretrieve('https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth', '/weights/GFPGANv1.3.pth');\
-print('Pre-download core weights completed!')\
 "
 
 # Trigger gfpgan/facexlib auto-download for face helper models during build to prevent cold start latency
