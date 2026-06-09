@@ -248,7 +248,10 @@ def load_face_enhancer(scale, upsampler):
             enhancer.arcface.half()
         orig_forward = enhancer.gfpgan.forward
         def half_forward(x):
-            return orig_forward(x.half()).float()
+            out = orig_forward(x.half())
+            if isinstance(out, torch.Tensor):
+                return out.float()
+            return tuple(t.float() if isinstance(t, torch.Tensor) else t for t in out)
         enhancer.gfpgan.forward = half_forward
     return enhancer
 
