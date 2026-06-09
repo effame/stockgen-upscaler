@@ -20,20 +20,16 @@ open(path, 'w').write(content);\
 print('Patched:', path)\
 "
 
-# Trigger gfpgan/facexlib auto-download for face helper models during build to prevent cold start latency
+# Pre-download face helper models (facexlib detection/parsing) during build to avoid cold start latency.
+# Weights loaded from S3 network volume at runtime; just importing triggers auto-download of small helper models.
 RUN python -c "\
-import sys, os, types;\
+import sys, types;\
 import torchvision.transforms.functional as F_tv;\
 shim = types.ModuleType('torchvision.transforms.functional_tensor');\
 shim.rgb_to_grayscale = F_tv.rgb_to_grayscale;\
 sys.modules['torchvision.transforms.functional_tensor'] = shim;\
 from gfpgan import GFPGANer;\
-from realesrgan import RealESRGANer;\
-from basicsr.archs.rrdbnet_arch import RRDBNet;\
-model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2);\
-upsampler = RealESRGANer(scale=2, model_path='/weights/RealESRGAN_x2plus.pth', model=model);\
-GFPGANer(model_path='/weights/GFPGANv1.3.pth', upscale=2, arch='clean', channel_multiplier=2, bg_upsampler=upsampler);\
-print('Pre-download face helper detection/parsing models completed!')\
+print('Pre-download face helper models completed!')\
 "
 
 COPY rp_handler.py /rp_handler.py
