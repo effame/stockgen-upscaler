@@ -13,6 +13,7 @@ from PIL import Image
 
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
+    torch.backends.cudnn.benchmark = True
 
 # ---------------------------------------------------------------------------
 # S3 (Cloudflare R2) — lazy init
@@ -220,7 +221,7 @@ def load_upsampler(model_key):
         scale=cfg["scale"],
         model_path=dest,
         model=model,
-        tile=400,
+        tile=600,
         tile_pad=10,
         pre_pad=10,
         half=torch.cuda.is_available(),
@@ -382,12 +383,14 @@ def handler(job):
     if face_enhance:
         runpod.serverless.progress_update(job, {"progress": 30, "statusMessage": "Enhancing face + upscaling..."})
         enhancer = get_face_enhancer(model_name, s, upsampler)
-        _, _, output = enhancer.enhance(
-            img, has_aligned=False, only_center_face=False, paste_back=True
-        )
+        with torch.inference_mode():
+            _, _, output = enhancer.enhance(
+                img, has_aligned=False, only_center_face=False, paste_back=True
+            )
     else:
         runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": "AI upscaling..."})
-        output, _ = upsampler.enhance(img, outscale=s)
+        with torch.inference_mode():
+            output, _ = upsampler.enhance(img, outscale=s)
 
     # Encode to JPEG
     success, encoded = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
