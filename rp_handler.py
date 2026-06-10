@@ -221,7 +221,7 @@ def load_upsampler(model_key):
         scale=cfg["scale"],
         model_path=dest,
         model=model,
-        tile=600,
+        tile=0,
         tile_pad=10,
         pre_pad=10,
         half=torch.cuda.is_available(),
