@@ -425,5 +425,5 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    print("--- Starting Serverless Worker | Version 2.1.1 ---")
+    print("--- Starting Serverless Worker | Version 2.1.2 ---")
     runpod.serverless.start({"handler": handler})
