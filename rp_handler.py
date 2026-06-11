@@ -221,10 +221,10 @@ def load_upsampler(model_key):
         scale=cfg["scale"],
         model_path=dest,
         model=model,
-        tile=800,
+        tile=0,
         tile_pad=10,
         pre_pad=10,
-        half=torch.cuda.is_available(),
+        half=False,
     )
 
 
@@ -432,5 +432,5 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    print("--- Starting Serverless Worker | Version 2.1.0 ---")
+    print("--- Starting Serverless Worker | Version 2.1.1 ---")
     runpod.serverless.start({"handler": handler})
