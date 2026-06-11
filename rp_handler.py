@@ -202,13 +202,14 @@ def load_upsampler(model_key):
         download_file(cfg["url"], dest)
 
     try:
-        sd = safe_torch_load(dest, map_location="cpu")
-        raw = sd.get("params") or sd.get("params_ema") or sd
-        raw = convert_state_dict(raw, cfg["num_block"])
-        torch.save({"params": raw}, dest)
+        loadnet = safe_torch_load(dest, map_location="cpu")
+        if 'params' not in loadnet and 'params_ema' not in loadnet:
+            print(f"Wrapping {cfg['file']} with 'params' key for RealESRGANer compatibility...")
+            torch.save({'params': loadnet}, dest)
     except Exception as e:
         print(f"Weight prep warning for {model_key}: {e}")
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = RRDBNet(
         num_in_ch=3,
         num_out_ch=3,
@@ -216,7 +217,7 @@ def load_upsampler(model_key):
         num_block=cfg["num_block"],
         num_grow_ch=32,
         scale=cfg["scale"],
-    )
+    ).to(device)
     return RealESRGANer(
         scale=cfg["scale"],
         model_path=dest,
@@ -224,7 +225,8 @@ def load_upsampler(model_key):
         tile=800,
         tile_pad=10,
         pre_pad=10,
-        half=False,
+        half=torch.cuda.is_available(),
+        device=device,
     )
 
 
@@ -385,8 +387,12 @@ def handler(job):
         with torch.inference_mode():
             output, _ = upsampler.enhance(img, outscale=s)
 
-    # Encode to JPEG
-    success, encoded = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    # Encode output (JPEG default, PNG if requested)
+    image_format = job_input.get("image_format", "jpg")
+    if image_format == "png":
+        success, encoded = cv2.imencode(".png", output, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    else:
+        success, encoded = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
     if not success:
         return {"error": "Failed to encode output image"}
 
@@ -397,7 +403,8 @@ def handler(job):
     r2_key = job_input.get("r2_key")
     if r2_key:
         runpod.serverless.progress_update(job, {"progress": 85, "statusMessage": "Uploading to Cloudflare R2..."})
-        r2_url = upload_to_r2(out_bytes, r2_key)
+        content_type = "image/png" if image_format == "png" else "image/jpeg"
+        r2_url = upload_to_r2(out_bytes, r2_key, content_type)
         if r2_url:
             runpod.serverless.progress_update(job, {"progress": 95, "statusMessage": "Done"})
 
@@ -415,7 +422,7 @@ def handler(job):
     return {
         "image": b64,
         "r2_url": r2_url,
-        "image_format": "jpg",
+        "image_format": image_format,
         "model": model_name,
         "face_enhance_applied": face_enhance,
         "scale": s,
@@ -425,5 +432,5 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    print("--- Starting Serverless Worker | Version 2.1.2 ---")
+    print("--- Starting Serverless Worker | Version 2.2.0 ---")
     runpod.serverless.start({"handler": handler})
