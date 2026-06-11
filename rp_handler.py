@@ -10,7 +10,6 @@ import numpy as np
 import torch
 import runpod
 from PIL import Image
-import piexif
 
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
@@ -322,21 +321,6 @@ def load_image(image_source):
 
 
 # ---------------------------------------------------------------------------
-# DPI 300 embedder
-# ---------------------------------------------------------------------------
-def embed_dpi(jpeg_bytes, dpi=300):
-    try:
-        exif_dict = piexif.load(jpeg_bytes)
-        exif_dict["0th"][piexif.ImageIFD.XResolution] = (dpi, 1)
-        exif_dict["0th"][piexif.ImageIFD.YResolution] = (dpi, 1)
-        exif_dict["0th"][piexif.ImageIFD.ResolutionUnit] = 2
-        return piexif.insert(piexif.dump(exif_dict), jpeg_bytes)
-    except Exception as e:
-        print(f"[DPI] Warning: failed to embed DPI {dpi}: {e}")
-        return jpeg_bytes
-
-
-# ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
 def handler(job):
@@ -413,10 +397,6 @@ def handler(job):
         return {"error": "Failed to encode output image"}
 
     out_bytes = encoded.tobytes()
-
-    # Embed DPI 300 metadata (only for JPEG via piexif — no re-encode)
-    if image_format == "jpg":
-        out_bytes = embed_dpi(out_bytes, dpi=300)
 
     # Direct-to-R2 upload
     r2_url = None
