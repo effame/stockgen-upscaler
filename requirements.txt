@@ -7,3 +7,4 @@ basicsr==1.4.2
 realesrgan==0.3.0
 gfpgan==1.3.8
 runpod==1.7.1
+piexif==1.1.3
