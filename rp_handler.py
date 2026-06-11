@@ -221,7 +221,7 @@ def load_upsampler(model_key):
         scale=cfg["scale"],
         model_path=dest,
         model=model,
-        tile=0,
+        tile=800,
         tile_pad=10,
         pre_pad=10,
         half=False,
@@ -244,16 +244,9 @@ def load_face_enhancer(scale, upsampler):
         bg_upsampler=upsampler,
     )
     if torch.cuda.is_available():
-        enhancer.gfpgan.half()
+        enhancer.gfpgan = enhancer.gfpgan.float()
         if hasattr(enhancer, "arcface"):
-            enhancer.arcface.half()
-        orig_forward = enhancer.gfpgan.forward
-        def half_forward(x):
-            out = orig_forward(x.half())
-            if isinstance(out, torch.Tensor):
-                return out.float()
-            return tuple(t.float() if isinstance(t, torch.Tensor) else t for t in out)
-        enhancer.gfpgan.forward = half_forward
+            enhancer.arcface.float()
     return enhancer
 
 
