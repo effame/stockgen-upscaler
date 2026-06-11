@@ -203,6 +203,11 @@ def load_upsampler(model_key):
 
     try:
         loadnet = safe_torch_load(dest, map_location="cpu")
+        # Convert classic ESRGAN keys (model.0.*) to RRDBNet format
+        if any(k.startswith("model.0.") for k in loadnet.keys()):
+            print(f"Classic ESRGAN keys detected in {cfg['file']}. Converting state dict...")
+            loadnet = convert_state_dict(loadnet, cfg["num_block"])
+
         if 'params' not in loadnet and 'params_ema' not in loadnet:
             print(f"Wrapping {cfg['file']} with 'params' key for RealESRGANer compatibility...")
             torch.save({'params': loadnet}, dest)
