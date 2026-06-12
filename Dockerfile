@@ -1,7 +1,7 @@
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
 # System deps for opencv
-RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 libturbojpeg1 && rm -rf /var/lib/apt/lists/*
 
 # Pin all pip deps for reproducible builds.
 # PyTorch already ships in the base image — skip re-installing it.
@@ -13,7 +13,9 @@ RUN pip install --break-system-packages --no-cache-dir \
   runpod==1.7.1 \
   boto3==1.34.106 \
   "numpy<2" \
-  "Pillow>=10"
+  "Pillow>=10" \
+  PyTurboJPEG==1.7.7 \
+  piexif==1.1.2
 
 # Patch basicsr: replace torchvision.functional_tensor import (removed in newer torchvision)
 RUN python -c "\

@@ -12,6 +12,19 @@ import torch
 import runpod
 from PIL import Image
 
+# TurboJPEG — ~1.5-2x faster encode than OpenCV
+try:
+    from turbojpeg import TurboJPEG
+    _tj = TurboJPEG()
+except Exception:
+    _tj = None
+
+# piexif — DPI metadata injection (safe fallback)
+try:
+    import piexif
+except Exception:
+    piexif = None
+
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
     torch.backends.cudnn.benchmark = True
@@ -204,7 +217,6 @@ def load_upsampler(model_key):
 
     try:
         loadnet = safe_torch_load(dest, map_location="cpu")
-        # Convert classic ESRGAN keys (model.0.*) to RRDBNet format
         if any(k.startswith("model.0.") for k in loadnet.keys()):
             print(f"Classic ESRGAN keys detected in {cfg['file']}. Converting state dict...")
             loadnet = convert_state_dict(loadnet, cfg["num_block"])
@@ -276,7 +288,6 @@ def get_face_enhancer(model_key, scale, upsampler):
 # EXIF auto-orient
 # ---------------------------------------------------------------------------
 def apply_exif_orientation(img_bgr, raw_bytes):
-    """Detect EXIF orientation from raw bytes and rotate via OpenCV to avoid JPEG re-compression."""
     if raw_bytes is None:
         return img_bgr
     try:
@@ -291,10 +302,48 @@ def apply_exif_orientation(img_bgr, raw_bytes):
 
 
 # ---------------------------------------------------------------------------
+# DPI metadata injector (JPEG only, via piexif)
+# ---------------------------------------------------------------------------
+def inject_dpi(jpeg_bytes, dpi=300):
+    if piexif is None:
+        return jpeg_bytes
+    try:
+        exif_dict = piexif.load(jpeg_bytes)
+        exif_dict["0th"][piexif.ImageIFD.XResolution] = (dpi, 1)
+        exif_dict["0th"][piexif.ImageIFD.YResolution] = (dpi, 1)
+        exif_dict["0th"][piexif.ImageIFD.ResolutionUnit] = 2
+        return piexif.insert(piexif.dump(exif_dict), jpeg_bytes)
+    except Exception as e:
+        print(f"[DPI] Warning: failed to embed DPI {dpi}: {e}")
+        return jpeg_bytes
+
+
+# ---------------------------------------------------------------------------
+# Image encoder (TurboJPEG for JPEG, OpenCV for PNG)
+# ---------------------------------------------------------------------------
+def encode_image(bgr_array, image_format, quality=95):
+    if image_format == "png":
+        success, encoded = cv2.imencode(".png", bgr_array, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+        if not success:
+            return None
+        return encoded.tobytes()
+
+    if _tj is not None:
+        try:
+            return _tj.encode(bgr_array, quality=quality)
+        except Exception as e:
+            print(f"[JPEG] TurboJPEG failed, falling back to OpenCV: {e}")
+
+    success, encoded = cv2.imencode(".jpg", bgr_array, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not success:
+        return None
+    return encoded.tobytes()
+
+
+# ---------------------------------------------------------------------------
 # Image loader
 # ---------------------------------------------------------------------------
 def load_image(image_source):
-    """Return BGR ndarray."""
     raw = None
 
     if isinstance(image_source, str) and image_source.startswith(("http://", "https://")):
@@ -337,7 +386,6 @@ def handler(job):
     if not image_source:
         return {"error": "Missing 'image' or 'source_image' input"}
 
-    # Normalise model name
     model_map = {
         "RealESRGAN_x4plus": "x4plus",
         "real-esrgan": "x4plus",
@@ -351,7 +399,6 @@ def handler(job):
     }
     model_name = model_map.get(model_name, "x4plus")
 
-    # Load image
     try:
         runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "Downloading image..."})
         img = load_image(image_source)
@@ -364,21 +411,15 @@ def handler(job):
     cfg = MODELS[model_name]
     max_in = cfg["max_output"] // cfg["scale"]
     if w > max_in or h > max_in:
-        return {
-            "error": (
-                f"Input image too large ({w}x{h}) for {model_name} ({cfg['tier']} tier). "
-                f"Max input: {max_in}x{max_in} = {max_in * max_in // 1_000_000} MP "
-                f"(output cap: {cfg['max_output']}x{cfg['max_output']} at {cfg['scale']}x scale)."
-            )
-        }
+        return {"error": (
+            f"Input image too large ({w}x{h}) for {model_name} ({cfg['tier']} tier). "
+            f"Max input: {max_in}x{max_in} = {max_in * max_in // 1_000_000} MP "
+            f"(output cap: {cfg['max_output']}x{cfg['max_output']} at {cfg['scale']}x scale)."
+        )}
 
-    # Upscale
     upsampler = get_upsampler(model_name)
     s = MODELS[model_name]["scale"]
 
-    # Both RealESRGANer.enhance() and GFPGANer.enhance() expect BGR input
-    # (they convert to RGB internally and back to BGR on output).
-    # OpenCV images are BGR by default — no extra conversion needed.
     if face_enhance:
         runpod.serverless.progress_update(job, {"progress": 30, "statusMessage": "Enhancing face + upscaling..."})
         enhancer = get_face_enhancer(model_name, s, upsampler)
@@ -391,18 +432,16 @@ def handler(job):
         with torch.inference_mode():
             output, _ = upsampler.enhance(img, outscale=s)
 
-    # Encode output (JPEG default, PNG if requested)
     image_format = job_input.get("image_format", "jpg")
-    if image_format == "png":
-        success, encoded = cv2.imencode(".png", output, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-    else:
-        success, encoded = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    if not success:
+    out_bytes = encode_image(output, image_format)
+
+    if out_bytes is None:
         return {"error": "Failed to encode output image"}
 
-    out_bytes = encoded.tobytes()
+    # Inject DPI 300 metadata (JPEG only)
+    if image_format == "jpg":
+        out_bytes = inject_dpi(out_bytes, dpi=300)
 
-    # Direct-to-R2 upload
     r2_url = None
     r2_key = job_input.get("r2_key")
     if r2_key:
@@ -418,7 +457,6 @@ def handler(job):
 
     oh, ow = output.shape[:2]
 
-    # Free GPU memory
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -436,5 +474,5 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    print("--- Starting Serverless Worker | Version 2.3.0 ---")
+    print("--- Starting Serverless Worker | Version 2.4.0 ---")
     runpod.serverless.start({"handler": handler})
