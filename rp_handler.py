@@ -308,7 +308,11 @@ def inject_dpi(jpeg_bytes, dpi=300):
     if piexif is None:
         return jpeg_bytes
     try:
-        exif_dict = piexif.load(jpeg_bytes)
+        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
+        try:
+            exif_dict = piexif.load(jpeg_bytes)
+        except ValueError:
+            pass
         exif_dict["0th"][piexif.ImageIFD.XResolution] = (dpi, 1)
         exif_dict["0th"][piexif.ImageIFD.YResolution] = (dpi, 1)
         exif_dict["0th"][piexif.ImageIFD.ResolutionUnit] = 2
