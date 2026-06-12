@@ -443,10 +443,8 @@ def handler(job):
         return {"error": "Failed to encode output image"}
 
     # Inject DPI 300 metadata (JPEG only)
-    dpi_injected = False
     if image_format == "jpg":
         out_bytes = inject_dpi(out_bytes, dpi=300)
-        dpi_injected = True
 
     r2_url = None
     r2_key = job_input.get("r2_key")
@@ -476,11 +474,6 @@ def handler(job):
         "scale": s,
         "input_size": {"width": w, "height": h},
         "output_size": {"width": ow, "height": oh},
-        "_debug": {
-            "piexif_available": piexif is not None,
-            "turbojpeg_available": _tj is not None,
-            "dpi_injected": dpi_injected,
-        },
     }
 
 
