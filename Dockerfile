@@ -1,7 +1,11 @@
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
 # System deps for opencv
-RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 libturbojpeg1 && rm -rf /var/lib/apt/lists/*
+# Install system deps (opencv + libjpeg-turbo from official .deb)
+RUN apt-get update && apt-get install -y libxcb1 libgl1 libglib2.0-0t64 curl && \
+    curl -fsSL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.4/libjpeg-turbo-official_3.0.4_amd64.deb -o /tmp/lj.deb && \
+    apt-get install -y /tmp/lj.deb && rm -f /tmp/lj.deb && \
+    rm -rf /var/lib/apt/lists/*
 
 # Pin all pip deps for reproducible builds.
 # PyTorch already ships in the base image — skip re-installing it.
