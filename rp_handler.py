@@ -1,4 +1,4 @@
-# StockGen Upscaler v2.3.0
+# StockGen Upscaler v2.4.0
 import os
 import sys
 import base64
@@ -228,9 +228,7 @@ def load_upsampler(model_key):
         scale=cfg["scale"],
         model_path=dest,
         model=model,
-        tile=800,
-        tile_pad=10,
-        pre_pad=10,
+        tile=0,
         half=torch.cuda.is_available(),
         device=device,
     )
