@@ -3,6 +3,7 @@ import os
 import sys
 import base64
 import io
+import tempfile
 import requests
 import boto3
 
@@ -317,7 +318,26 @@ def inject_dpi(jpeg_bytes, dpi=300):
         exif_dict["0th"][piexif.ImageIFD.XResolution] = (dpi, 1)
         exif_dict["0th"][piexif.ImageIFD.YResolution] = (dpi, 1)
         exif_dict["0th"][piexif.ImageIFD.ResolutionUnit] = 2
-        return piexif.insert(piexif.dump(exif_dict), jpeg_bytes)
+        exif_bytes = piexif.dump(exif_dict)
+        # piexif 1.1.2: requires file paths when input is bytes
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(jpeg_bytes)
+            in_path = f.name
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            out_path = f.name
+        try:
+            piexif.insert(exif_bytes, in_path, out_path)
+            with open(out_path, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                os.remove(in_path)
+            except OSError:
+                pass
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
     except Exception as e:
         print(f"[DPI] Warning: failed to embed DPI {dpi}: {e}")
         return jpeg_bytes
