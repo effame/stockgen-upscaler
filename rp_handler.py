@@ -208,7 +208,7 @@ def convert_state_dict(state_dict, num_block):
 # ---------------------------------------------------------------------------
 # Upsampler & face-enhancer loader
 # ---------------------------------------------------------------------------
-def load_upsampler(model_key):
+def load_upsampler(model_key, use_half=True):
     cfg = MODELS[model_key]
     dest = os.path.join(WEIGHTS_DIR, cfg["file"])
 
@@ -241,7 +241,7 @@ def load_upsampler(model_key):
         model_path=dest,
         model=model,
         tile=0,
-        half=torch.cuda.is_available(),
+        half=use_half,
         device=device,
     )
 
@@ -271,11 +271,12 @@ def load_face_enhancer(scale, upsampler):
 _upsamplers = {}
 _face_enhancers = {}
 
-def get_upsampler(model_key):
-    if model_key not in _upsamplers:
-        print(f"Loading upsampler: {model_key}...")
-        _upsamplers[model_key] = load_upsampler(model_key)
-    return _upsamplers[model_key]
+def get_upsampler(model_key, use_half=True):
+    cache_key = f"{model_key}_half{use_half}"
+    if cache_key not in _upsamplers:
+        print(f"Loading upsampler: {model_key} (half={'1' if use_half else '0'})...")
+        _upsamplers[cache_key] = load_upsampler(model_key, use_half)
+    return _upsamplers[cache_key]
 
 def get_face_enhancer(model_key, scale, upsampler):
     if model_key not in _face_enhancers:
@@ -386,6 +387,7 @@ def handler(job):
     image_source = job_input.get("image") or job_input.get("source_image")
     model_name = job_input.get("model", "x4plus")
     face_enhance = job_input.get("face_enhance", False)
+    use_half = job_input.get("half", True)
 
     if not image_source:
         return {"error": "Missing 'image' or 'source_image' input"}
@@ -421,7 +423,7 @@ def handler(job):
             f"(output cap: {cfg['max_output']}x{cfg['max_output']} at {cfg['scale']}x scale)."
         )}
 
-    upsampler = get_upsampler(model_name)
+    upsampler = get_upsampler(model_name, use_half)
     s = MODELS[model_name]["scale"]
 
     if face_enhance:
