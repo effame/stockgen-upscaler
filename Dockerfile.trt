@@ -1,0 +1,64 @@
+# ===========================================================================
+# 🚀 StockGen AI - High-Performance TensorRT Dockerfile (v2.0 Beta)
+# Base Image: NVIDIA Pytorch Container (บรรจุ TensorRT, CUDA, cuDNN ที่จูนมาแล้ว)
+# ===========================================================================
+FROM nvcr.io/nvidia/pytorch:24.03-py3
+
+# 1. ตั้งค่า Environment พื้นฐาน
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV TZ=Asia/Bangkok
+
+# 2. ติดตั้ง System Dependencies ที่จำเป็น (สำหรับ OpenCV และการจัดการไฟล์)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. กำหนดโฟลเดอร์ทำงาน
+WORKDIR /workspace
+
+# 4. ติดตั้ง Python Libraries (เน้นความเร็วและความเสถียร)
+# เราติดตั้ง piexif สำหรับระบบ DPI 300 และ runpod สำหรับระบบ Worker
+RUN pip install --no-cache-dir \
+    opencv-python-headless \
+    pillow \
+    piexif \
+    runpod \
+    boto3 \
+    requests \
+    onnx \
+    onnxruntime-gpu \
+    pycuda
+
+# 5. ติดตั้งโครงสร้างโมเดลหลัก (สำหรับ Pre-processing และ Fallback)
+RUN pip install --no-cache-dir \
+    basicsr \
+    realesrgan \
+    gfpgan
+
+# 6. คัดลอกโค้ดระบบใหม่ (TensorRT Native) เข้าสู่ Container
+# หมายเหตุ: เราแยกไฟล์ใหม่ เพื่อไม่ให้กระทบระบบเก่า
+COPY scripts/trt_engine_builder.py /workspace/scripts/
+COPY scripts/trt_inference_handler.py /workspace/scripts/
+COPY scripts/export-onnx.py /workspace/scripts/
+
+# 7. คัดลอกไฟล์ที่เกี่ยวข้องจากโปรเจกต์เดิม
+# (ใช้เฉพาะไฟล์ที่จำเป็นเพื่อความ Lean ของ Image)
+COPY utils.py /workspace/
+COPY models.py /workspace/
+COPY rp_handler_trt.py /workspace/
+
+# 8. เตรียมโฟลเดอร์สำหรับเก็บโมเดล (จะเชื่อมต่อกับ Network Volume ในภายหลัง)
+RUN mkdir -p /workspace/weights /workspace/models /workspace/trt_cache
+
+# 9. คำสั่งเริ่มต้น (สำหรับรอรับคำสั่งจาก RunPod)
+# ใช้ Handler ชุดใหม่ที่จูนมาเพื่อ TensorRT และ DPI 300 โดยเฉพาะ
+CMD ["python", "-u", "/workspace/rp_handler_trt.py"]
+
+# ข้อมูลผู้พัฒนา
+LABEL maintainer="StockGen AI Team"
+LABEL version="2.0-beta-trt"
+LABEL description="Ultra-high performance upscaler using NVIDIA TensorRT Native"
