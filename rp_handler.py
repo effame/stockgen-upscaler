@@ -84,7 +84,7 @@ def handler(job):
         
     s = 1
     if model_name != "none":
-        upsampler = get_upsampler(model_name, scale, use_half)
+        upsampler = get_upsampler(model_name, use_half)
         s = scale
 
         if face_enhance:
