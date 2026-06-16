@@ -45,7 +45,7 @@ from gfpgan import GFPGANer;\
 print('Pre-download face helper models completed!')\
 "
 
-COPY rp_handler.py /rp_handler.py
+COPY rp_handler.py utils.py models.py /
 
 # WEIGHTS_DIR is typically /workspace/weights when a network volume is mounted at /workspace.
 # Without a network volume the worker falls back to downloading weights from R2 at cold start.
