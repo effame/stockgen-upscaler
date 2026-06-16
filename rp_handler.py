@@ -74,6 +74,12 @@ def handler(job):
 
     # 3. Upscaling (Run on original RGB image)
     output_bgr = np.array(img_pil)[:, :, ::-1] # Convert RGB PIL to BGR Numpy
+    
+    # Anti-Halo technique: Pre-multiply alpha (mask out background to black before upscaling)
+    if remove_bg and alpha_mask is not None:
+        mask_3ch = np.stack([alpha_mask]*3, axis=2) / 255.0
+        output_bgr = (output_bgr * mask_3ch).astype(np.uint8)
+        
     s = 1
     if model_name != "none":
         upsampler = get_upsampler(model_name, scale, use_half)
@@ -95,8 +101,11 @@ def handler(job):
         runpod.serverless.progress_update(job, {"progress": 70, "statusMessage": "Merging high-res transparency mask..."})
         import cv2
         oh, ow = output_bgr.shape[:2]
-        # Upscale alpha channel using Lanczos4
-        alpha_up = cv2.resize(alpha_mask, (ow, oh), interpolation=cv2.INTER_LANCZOS4)
+        # Upscale alpha channel using INTER_CUBIC (softer edges, less harsh than LANCZOS4 for masking)
+        alpha_up = cv2.resize(alpha_mask, (ow, oh), interpolation=cv2.INTER_CUBIC)
+        # Defringing: Hard cut-off for very low opacity pixels that might cause faint halos
+        alpha_up[alpha_up < 10] = 0
+        
         # Merge BGR output with Alpha into RGBA
         output_rgba = np.zeros((oh, ow, 4), dtype=np.uint8)
         output_rgba[:, :, :3] = output_bgr[:, :, ::-1] # BGR to RGB
