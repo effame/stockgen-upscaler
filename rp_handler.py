@@ -1,95 +1,150 @@
-# StockGen Upscaler v2.4.1
+# StockGen Upscaler v2.4.2
 import base64
 import torch
 import runpod
+import numpy as np
+from PIL import Image
 from utils import load_image, encode_image, inject_dpi, upload_to_r2
 from models import MODELS, get_upsampler, get_face_enhancer
 
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cudnn.benchmark = True
+# Optional: Import rembg for background removal
+try:
+    from rembg import remove, new_session
+    REMBG_AVAILABLE = True
+    # Pre-warm session to avoid delay on first request
+    rembg_session = new_session('u2net')
+except ImportError:
+    REMBG_AVAILABLE = False
 
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+@torch.inference_mode()
 def handler(job):
     job_input = job["input"]
-    image_source = job_input.get("image") or job_input.get("source_image")
+    img_data = job_input.get("image")
     model_name = job_input.get("model", "x4plus")
+    scale = job_input.get("scale", 4)
     face_enhance = job_input.get("face_enhance", False)
-    use_half = job_input.get("half", True)
-
-    if not image_source:
-        return {"error": "Missing 'image' or 'source_image' input"}
-
-    model_map = {
-        "RealESRGAN_x4plus": "x4plus",
-        "real-esrgan": "x4plus",
-        "swinir": "x4plus",
-        "x4plus": "x4plus",
-        "RealESRGAN_x2plus": "x2plus",
-        "x2plus": "x2plus",
-        "ultrasharp": "ultrasharp",
-        "4x-UltraSharp": "ultrasharp",
-        "anime": "anime",
-    }
-    model_name = model_map.get(model_name, "x4plus")
-
-    try:
-        runpod.serverless.progress_update(job, {"progress": 15, "statusMessage": "Downloading image..."})
-        img = load_image(image_source)
-    except ValueError as e:
-        return {"error": str(e)}
-    except Exception as e:
-        return {"error": f"Failed to fetch image: {e}"}
-
-    h, w = img.shape[:2]
-    cfg = MODELS[model_name]
-    max_in = cfg["max_output"] // cfg["scale"]
-    if w > max_in or h > max_in:
-        return {"error": f"Input image too large ({w}x{h}). Max input: {max_in}x{max_in}."}
-
-    upsampler = get_upsampler(model_name, use_half)
-    s = cfg["scale"]
-
-    if face_enhance:
-        runpod.serverless.progress_update(job, {"progress": 30, "statusMessage": "Enhancing face + upscaling..."})
-        enhancer = get_face_enhancer(model_name, s, upsampler)
-        with torch.inference_mode():
-            _, _, output = enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
-    else:
-        runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": "AI upscaling..."})
-        with torch.inference_mode():
-            output, _ = upsampler.enhance(img, outscale=s)
-
     image_format = job_input.get("image_format", "jpg")
-    out_bytes = encode_image(output, image_format)
-
-    if out_bytes is None:
-        return {"error": "Failed to encode output image"}
-
-    if image_format == "jpg":
-        out_bytes = inject_dpi(out_bytes, dpi=300)
-
-    r2_url = None
+    use_half = job_input.get("half", True)
+    remove_bg = job_input.get("remove_bg", False)
     r2_key = job_input.get("r2_key")
+
+    if not img_data:
+        return {"error": "No image data provided"}
+
+    # 1. Load image
+    runpod.serverless.progress_update(job, {"progress": 10, "statusMessage": "Loading image..."})
+    try:
+        img = load_image(img_data)
+    except Exception as e:
+        return {"error": f"Failed to decode image: {e}"}
+        
+    if img is None:
+        return {"error": "Failed to decode image"}
+
+    # Ensure img is RGB PIL
+    img_pil = img.convert("RGB")
+    h, w = img_pil.height, img_pil.width
+
+    # 2. Background Removal (Smart Pipeline: Run on original small image)
+    alpha_mask = None
+    if remove_bg:
+        if REMBG_AVAILABLE:
+            runpod.serverless.progress_update(job, {"progress": 25, "statusMessage": "Removing background (Alpha Matting)..."})
+            # Use Alpha Matting for high-quality edges on the small image
+            pil_nobg = remove(
+                img_pil, 
+                session=rembg_session,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=240,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=10
+            )
+            # If removing background, we must output PNG for transparency
+            image_format = "png"
+            # Extract the Alpha mask as numpy array
+            alpha_mask = np.array(pil_nobg)[:, :, 3]
+        else:
+            print("WARNING: Background removal requested but rembg not installed")
+
+    # 3. Upscaling (Run on original RGB image)
+    output_bgr = np.array(img_pil)[:, :, ::-1] # Convert RGB PIL to BGR Numpy
+    s = 1
+    if model_name != "none":
+        upsampler = get_upsampler(model_name, scale, use_half)
+        s = scale
+
+        if face_enhance:
+            runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": "Enhancing face + upscaling..."})
+            enhancer = get_face_enhancer("gfpgan", s, upsampler)
+            _, _, output_bgr = enhancer.enhance(output_bgr, has_aligned=False, only_center_face=False, paste_back=True)
+            if isinstance(output_bgr, list): # GFPGAN returns a list of faces sometimes, but enhance usually returns tuple
+                pass
+        else:
+            runpod.serverless.progress_update(job, {"progress": 50, "statusMessage": "AI upscaling..."})
+            output_bgr, _ = upsampler.enhance(output_bgr, outscale=s)
+            
+    # 4. Handle Alpha Upscaling & Merge (Smart Pipeline)
+    final_output = output_bgr
+    if remove_bg and alpha_mask is not None:
+        runpod.serverless.progress_update(job, {"progress": 70, "statusMessage": "Merging high-res transparency mask..."})
+        import cv2
+        oh, ow = output_bgr.shape[:2]
+        # Upscale alpha channel using Lanczos4
+        alpha_up = cv2.resize(alpha_mask, (ow, oh), interpolation=cv2.INTER_LANCZOS4)
+        # Merge BGR output with Alpha into RGBA
+        output_rgba = np.zeros((oh, ow, 4), dtype=np.uint8)
+        output_rgba[:, :, :3] = output_bgr[:, :, ::-1] # BGR to RGB
+        output_rgba[:, :, 3] = alpha_up
+        # Convert back to PIL
+        final_output_pil = Image.fromarray(output_rgba, 'RGBA')
+    else:
+        # Convert BGR back to RGB PIL
+        final_output_pil = Image.fromarray(output_bgr[:, :, ::-1])
+
+    ow, oh = final_output_pil.size
+
+    # 5. Output processing (DPI Injection)
+    runpod.serverless.progress_update(job, {"progress": 80, "statusMessage": "Injecting 300 DPI metadata..."})
+    final_output_bytes = inject_dpi(final_output_pil, image_format)
+
+    if final_output_bytes is None:
+         # Fallback encoding if DPI injection fails
+         final_output_bytes = encode_image(final_output_pil, image_format)
+
+    # 6. Upload to R2 or return Base64
+    r2_url = None
     if r2_key:
-        runpod.serverless.progress_update(job, {"progress": 85, "statusMessage": "Uploading to Cloudflare R2..."})
-        content_type = "image/png" if image_format == "png" else "image/jpeg"
-        r2_url = upload_to_r2(out_bytes, r2_key, content_type)
+        runpod.serverless.progress_update(job, {"progress": 90, "statusMessage": "Uploading to Cloudflare R2..."})
+        try:
+            r2_url = upload_to_r2(final_output_bytes, r2_key, image_format)
+        except Exception as e:
+            print(f"R2 Upload Error: {e}")
 
-    b64 = None
-    if not r2_url:
-        b64 = base64.b64encode(out_bytes).decode("utf-8")
+    if r2_url:
+        return {
+            "r2Url": r2_url,
+            "model": model_name,
+            "remove_bg": remove_bg,
+            "face_enhance": face_enhance,
+            "scale": scale,
+            "input_size": {"width": w, "height": h},
+            "output_size": {"width": ow, "height": oh},
+        }
 
-    oh, ow = output.shape[:2]
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
+    # Fallback to Base64
+    b64 = base64.b64encode(final_output_bytes).decode("utf-8")
     return {
         "image": b64,
-        "r2_url": r2_url,
-        "image_format": image_format,
         "model": model_name,
-        "face_enhance_applied": face_enhance,
-        "scale": s,
+        "remove_bg": remove_bg,
+        "face_enhance": face_enhance,
+        "scale": scale,
         "input_size": {"width": w, "height": h},
         "output_size": {"width": ow, "height": oh},
     }
