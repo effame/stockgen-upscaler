@@ -1,5 +1,6 @@
 # StockGen Upscaler v2.4.2
 import base64
+import cv2
 import torch
 import runpod
 import numpy as np
@@ -47,8 +48,9 @@ def handler(job):
     if img is None:
         return {"error": "Failed to decode image"}
 
-    # Ensure img is RGB PIL
-    img_pil = img.convert("RGB")
+    # load_image returns BGR numpy; convert to RGB PIL
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(img_rgb)
     h, w = img_pil.height, img_pil.width
 
     # 2. Background Removal (Smart Pipeline: Run on original small image)
@@ -99,7 +101,6 @@ def handler(job):
     final_output = output_bgr
     if remove_bg and alpha_mask is not None:
         runpod.serverless.progress_update(job, {"progress": 70, "statusMessage": "Merging high-res transparency mask..."})
-        import cv2
         oh, ow = output_bgr.shape[:2]
         # Upscale alpha channel using INTER_CUBIC (softer edges, less harsh than LANCZOS4 for masking)
         alpha_up = cv2.resize(alpha_mask, (ow, oh), interpolation=cv2.INTER_CUBIC)
