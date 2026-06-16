@@ -121,11 +121,16 @@ def handler(job):
 
     # 5. Output processing (DPI Injection)
     runpod.serverless.progress_update(job, {"progress": 80, "statusMessage": "Injecting 300 DPI metadata..."})
-    final_output_bytes = inject_dpi(final_output_pil, image_format)
+    # Encode PIL Image to JPEG bytes first, then inject DPI
+    import io
+    buf = io.BytesIO()
+    save_format = "PNG" if image_format == "png" else "JPEG"
+    final_output_pil.save(buf, format=save_format, quality=95)
+    encoded_bytes = buf.getvalue()
+    final_output_bytes = inject_dpi(encoded_bytes, dpi=300)
 
     if final_output_bytes is None:
-         # Fallback encoding if DPI injection fails
-         final_output_bytes = encode_image(final_output_pil, image_format)
+         final_output_bytes = encoded_bytes
 
     # 6. Upload to R2 or return Base64
     r2_url = None
