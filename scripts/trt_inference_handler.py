@@ -55,7 +55,7 @@ class StockGenInference:
 
         torch.cuda.synchronize()
         start = time.time()
-        success = self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
+        success = self.context.execute_async_v3(stream_handle=0)
         torch.cuda.synchronize()
         inference_time = time.time() - start
 
