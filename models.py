@@ -24,6 +24,7 @@ MODELS = {
         "scale": 2,
         "num_block": 23,
         "max_output": 8000,
+        "tile": 0,
         "tier": "normal",
     },
     "x4plus": {
@@ -56,8 +57,8 @@ MODELS = {
         "scale": 4,
         "num_block": 0,
         "max_output": 8000,
+        "tile": 0,
         "tier": "general",
-        "arch": "srvgg",
     },
 }
 
@@ -122,7 +123,8 @@ def load_upsampler(model_key, use_half=True):
         model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=cfg["scale"], act_type="prelu").to(device)
     else:
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=cfg["num_block"], num_grow_ch=32, scale=cfg["scale"]).to(device)
-    return RealESRGANer(scale=cfg["scale"], model_path=dest, model=model, tile=0, half=use_half, device=device)
+    tile_size = 0 if cfg.get("tile") == 0 else cfg.get("tile", 800)
+    return RealESRGANer(scale=cfg["scale"], model_path=dest, model=model, tile=tile_size, half=use_half, device=device)
 
 GFPGAN_PATH = os.path.join(WEIGHTS_DIR, "GFPGANv1.3.pth")
 
