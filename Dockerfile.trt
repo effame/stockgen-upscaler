@@ -47,6 +47,7 @@ print('Pre-download face helper models completed!')\
 COPY rp_handler.py rp_handler_trt.py utils.py models.py /
 COPY scripts/ /scripts/
 
+ENV PYTHONPATH=/scripts
 ENV WEIGHTS_DIR=/workspace/weights
 ENV MODELS_DIR=/workspace/models
 

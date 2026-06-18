@@ -8,7 +8,8 @@ import runpod
 from PIL import Image
 from utils import load_image, encode_image, inject_dpi, upload_to_r2
 from models import MODELS, get_upsampler, get_face_enhancer
-from scripts.trt_inference_handler import StockGenInference
+import sys; sys.path.insert(0, "/scripts")
+from trt_inference_handler import StockGenInference
 
 try:
     from rembg import remove, new_session
