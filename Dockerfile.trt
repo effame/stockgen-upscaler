@@ -18,7 +18,7 @@ RUN pip install --break-system-packages --no-cache-dir \
   "Pillow>=10" \
   PyTurboJPEG==1.7.7 \
   piexif==1.1.2 \
-  tensorrt>=10.0,<11
+  tensorrt>=10.0
 
 # Patch basicsr: replace torchvision.functional_tensor import (removed in newer torchvision)
 RUN python -c "\
