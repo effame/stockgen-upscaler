@@ -69,7 +69,7 @@ def handler(job):
         output_img, inf_time = engine.upscale(img_rgb)
     else:
         runpod.serverless.progress_update(job, {"progress": 40})
-        upsampler = get_upsampler(model_name, use_half).to(device).eval()
+        upsampler = get_upsampler(model_name, use_half)
         img_t = torch.from_numpy(img_rgb).permute(2,0,1).unsqueeze(0).to(device)
         if use_half: img_t = img_t.half()
         else: img_t = img_t.float()
