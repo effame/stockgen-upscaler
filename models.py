@@ -59,6 +59,7 @@ MODELS = {
         "max_output": 8000,
         "tile": 0,
         "tier": "general",
+        "arch": "srvgg",
     },
 }
 
