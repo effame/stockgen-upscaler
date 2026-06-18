@@ -1,37 +1,15 @@
-import os, sys, base64, time, json
-import numpy as np
+import os, base64, numpy as np
 import cv2, torch, runpod
 from PIL import Image
-
-sys.path.insert(0, "/scripts")
-from trt_inference_handler import StockGenInference
-
-from utils import load_image, upload_to_r2
+from io import BytesIO
+from utils import load_image, upload_to_r2, inject_dpi
 from models import MODELS, get_upsampler, get_face_enhancer
-
-try:
-    from rembg import remove, new_session
-    REMBG_AVAILABLE = True
-except ImportError:
-    REMBG_AVAILABLE = False
-
-_engines = {}
-MODELS_DIR = os.environ.get("MODELS_DIR", "/workspace/models")
 
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda")
 else:
     device = torch.device("cpu")
-
-def get_trt_engine(model_name):
-    if model_name not in _engines:
-        path = os.path.join(MODELS_DIR, f"{model_name}.engine")
-        if os.path.exists(path):
-            _engines[model_name] = StockGenInference(path)
-        else:
-            return None
-    return _engines[model_name]
 
 @torch.inference_mode()
 def handler(job):
@@ -53,49 +31,59 @@ def handler(job):
     if img is None:
         return {"error": "Failed to decode"}
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_bgr = img
+    alpha_mask = None
+
     if remove_bg:
         try:
-            session = new_session('u2net')
-            result = remove(img, session=session, alpha_matting=True)
+            from rembg import remove, new_session
+            result = remove(img, session=new_session('u2net'), alpha_matting=True)
             if result is not None and result.shape[2] == 4:
-                img_rgb = cv2.cvtColor(result[:,:,:3], cv2.COLOR_RGBA2RGB)
+                alpha_mask = result[:,:,3]
+                img_bgr = result[:,:,:3]
         except:
             pass
 
-    engine = get_trt_engine(model_name)
-    if engine:
-        runpod.serverless.progress_update(job, {"progress": 40})
-        output_img, inf_time = engine.upscale(img_rgb)
-    else:
-        runpod.serverless.progress_update(job, {"progress": 40})
-        upsampler = get_upsampler(model_name, use_half)
-        img_t = torch.from_numpy(img_rgb).permute(2,0,1).unsqueeze(0).to(device)
-        if use_half: img_t = img_t.half()
-        else: img_t = img_t.float()
-        img_t /= 255.0
-        torch.cuda.synchronize()
-        output = upsampler(img_t)
-        torch.cuda.synchronize()
-        output_img = output.squeeze(0).permute(1,2,0).float().mul_(255).clamp_(0,255).to(torch.uint8).cpu().numpy()
-
-    oh, ow = output_img.shape[:2]
+    runpod.serverless.progress_update(job, {"progress": 40, "statusMessage": f"AI Upscaling ({model_name})..."})
+    upsampler = get_upsampler(model_name, use_half)
+    output_bgr, _ = upsampler.enhance(img_bgr, outscale=scale)
+    oh, ow = output_bgr.shape[:2]
 
     if face_enhance:
-        runpod.serverless.progress_update(job, {"progress": 60})
+        runpod.serverless.progress_update(job, {"progress": 60, "statusMessage": "Enhancing faces..."})
         try:
-            img_bgr = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR)
-            fe = get_face_enhancer(use_half)
-            _, _, fo = fe.enhance(img_bgr, has_aligned=False, only_center_face=False, paste_back=True)
+            enhancer = get_face_enhancer("gfpgan", scale, None)
+            _, _, fo = enhancer.enhance(output_bgr, has_aligned=False, only_center_face=False, paste_back=True)
             if fo is not None:
-                output_img = cv2.cvtColor(fo, cv2.COLOR_BGR2RGB)
+                output_bgr = fo
         except:
             pass
 
-    out_bytes = StockGenInference.finalize_image(output_img, image_format=image_format)
+    if alpha_mask is not None and remove_bg:
+        try:
+            alpha_up = cv2.resize(alpha_mask, (ow, oh), interpolation=cv2.INTER_CUBIC)
+            alpha_up[alpha_up < 10] = 0
+            out_rgba = np.zeros((oh, ow, 4), dtype=np.uint8)
+            out_rgba[:,:,:3] = output_bgr[:,:,::-1]
+            out_rgba[:,:,3] = alpha_up
+            pil_img = Image.fromarray(out_rgba, "RGBA")
+            buf = BytesIO()
+            if image_format == "png":
+                pil_img.save(buf, "PNG")
+            else:
+                white = Image.new("RGB", (ow, oh), (255,255,255))
+                white.paste(pil_img, mask=pil_img.split()[3])
+                pil_img = white
+                buf = BytesIO()
+                pil_img.save(buf, "JPEG", quality=95)
+            out_bytes = buf.getvalue()
+        except:
+            out_bytes = None
+    else:
+        out_bytes = inject_dpi(cv2.imencode(f".{image_format}", output_bgr)[1].tobytes(), image_format)
 
     r2_url = None
-    if r2_key:
+    if r2_key and out_bytes:
         try:
             r2_url = upload_to_r2(out_bytes, r2_key, f"image/{image_format}")
         except:
@@ -103,9 +91,8 @@ def handler(job):
 
     return {
         "r2_url": r2_url,
-        "image": base64.b64encode(out_bytes).decode() if not r2_url else None,
+        "image": base64.b64encode(out_bytes).decode() if out_bytes and not r2_url else None,
         "model": model_name,
-        "input_size": {"w": img_rgb.shape[1], "h": img_rgb.shape[0]},
         "output_size": {"w": ow, "h": oh},
     }
 
