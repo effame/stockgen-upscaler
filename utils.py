@@ -106,40 +106,24 @@ def apply_exif_orientation(img_bgr, raw_bytes):
         pass
     return img_bgr
 
-def inject_dpi(jpeg_bytes, dpi=300):
+def inject_dpi(image_bytes, dpi=300):
     if piexif is None:
-        return jpeg_bytes
+        return image_bytes
     try:
-        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
-        try:
-            exif_dict = piexif.load(jpeg_bytes)
-        except ValueError:
-            pass
-        exif_dict["0th"][piexif.ImageIFD.XResolution] = (dpi, 1)
-        exif_dict["0th"][piexif.ImageIFD.YResolution] = (dpi, 1)
-        exif_dict["0th"][piexif.ImageIFD.ResolutionUnit] = 2
-        exif_bytes = piexif.dump(exif_dict)
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            f.write(jpeg_bytes)
-            in_path = f.name
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            out_path = f.name
-        try:
-            piexif.insert(exif_bytes, in_path, out_path)
-            with open(out_path, "rb") as f:
-                return f.read()
-        finally:
-            try:
-                os.remove(in_path)
-            except OSError:
-                pass
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
+        zeroth_ifd = {
+            piexif.ImageIFD.XResolution: (dpi, 1),
+            piexif.ImageIFD.YResolution: (dpi, 1),
+            piexif.ImageIFD.ResolutionUnit: 2,
+        }
+        exif_bytes = piexif.dump({"0th": zeroth_ifd, "Exif": {}, "GPS": {}})
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        buf = io.BytesIO()
+        fmt = "PNG" if image_bytes[:4] == b"\x89PNG" else "JPEG"
+        pil_img.save(buf, format=fmt, exif=exif_bytes, quality=95)
+        return buf.getvalue()
     except Exception as e:
         print(f"[DPI] Warning: failed to embed DPI {dpi}: {e}")
-        return jpeg_bytes
+        return image_bytes
 
 def encode_image(bgr_array, image_format, quality=95):
     if image_format == "png":
