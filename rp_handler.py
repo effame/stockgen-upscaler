@@ -1,8 +1,8 @@
-# StockGen Upscaler v2.4.2
-import base64
+# StockGen Upscaler v2.4.3
 import cv2
 import torch
 import runpod
+import gc
 import numpy as np
 from PIL import Image
 from utils import load_image, encode_image, inject_dpi, upload_to_r2
@@ -96,6 +96,10 @@ def handler(job):
         else:
             runpod.serverless.progress_update(job, {"progress": 50, "statusMessage": "AI upscaling..."})
             output_bgr, _ = upsampler.enhance(output_bgr, outscale=s)
+    # Free PyTorch VRAM from upscaling intermediates
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
             
     # 4. Handle Alpha Upscaling & Merge (Smart Pipeline)
     final_output = output_bgr
@@ -132,30 +136,26 @@ def handler(job):
     if final_output_bytes is None:
          final_output_bytes = encoded_bytes
 
-    # 6. Upload to R2 or return Base64
+    # 6. Upload to R2 (required — no base64 fallback to avoid 400 Bad Request)
+    if not r2_key:
+        return {"error": "Missing r2_key"}
+    runpod.serverless.progress_update(job, {"progress": 90, "statusMessage": "Uploading to Cloudflare R2..."})
     r2_url = None
-    if r2_key:
-        runpod.serverless.progress_update(job, {"progress": 90, "statusMessage": "Uploading to Cloudflare R2..."})
-        try:
-            r2_url = upload_to_r2(final_output_bytes, r2_key, image_format)
-        except Exception as e:
-            print(f"R2 Upload Error: {e}")
+    try:
+        r2_url = upload_to_r2(final_output_bytes, r2_key, image_format)
+    except Exception as e:
+        print(f"R2 Upload Error: {e}")
 
-    if r2_url:
-        return {
-            "r2Url": r2_url,
-            "model": model_name,
-            "remove_bg": remove_bg,
-            "face_enhance": face_enhance,
-            "scale": scale,
-            "input_size": {"width": w, "height": h},
-            "output_size": {"width": ow, "height": oh},
-        }
+    if not r2_url:
+        return {"error": "R2 upload failed"}
 
-    # Fallback to Base64
-    b64 = base64.b64encode(final_output_bytes).decode("utf-8")
+    # Clean up VRAM before next job
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
     return {
-        "image": b64,
+        "r2Url": r2_url,
         "model": model_name,
         "remove_bg": remove_bg,
         "face_enhance": face_enhance,
