@@ -162,6 +162,9 @@ def handler(job):
         "scale": scale,
         "input_size": {"width": w, "height": h},
         "output_size": {"width": ow, "height": oh},
+        "output_file_size": len(final_output_bytes),
+        "output_dpi": 300,
+        "output_color_space": "sRGB",
     }
 
 if __name__ == "__main__":
