@@ -1,0 +1,12 @@
+web/
+.git/
+.github/
+docs/
+cli/
+colab/
+experimental/
+*.md
+__pycache__/
+*.pyc
+.venv/
+node_modules/
