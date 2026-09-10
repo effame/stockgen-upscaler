@@ -33,6 +33,8 @@ interface BatchItem {
   originalHeight?: number;
   upscaledWidth?: number;
   upscaledHeight?: number;
+  processedScale?: number;
+  processedRemoveBg?: boolean;
 }
 
 const LOCAL_KEY_STORAGE = "batch_upscaler_runpod_key";
@@ -54,6 +56,18 @@ export default function Home() {
   const [keyInputTemp, setKeyInputTemp] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isCancelledRef = useRef<boolean>(false);
+
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    return () => {
+      items.forEach((it) => {
+        if (it.previewUrl) {
+          URL.revokeObjectURL(it.previewUrl);
+        }
+      });
+    };
+  }, [items]);
 
   // Load API key from localStorage on mount
   useEffect(() => {
@@ -128,6 +142,11 @@ export default function Home() {
   };
 
   const handleProcessItem = async (item: BatchItem) => {
+    if (isCancelledRef.current) return;
+
+    const currentScale = scale;
+    const currentRemoveBg = removeBg;
+
     try {
       setItems((prev) =>
         prev.map((it) => (it.id === item.id ? { ...it, status: "processing", progress: 25 } : it))
@@ -141,6 +160,8 @@ export default function Home() {
       reader.readAsDataURL(item.file);
       const base64 = await base64Promise;
 
+      if (isCancelledRef.current) return;
+
       setItems((prev) =>
         prev.map((it) => (it.id === item.id ? { ...it, progress: 50 } : it))
       );
@@ -150,16 +171,18 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image: base64,
-          scale,
+          scale: currentScale,
           face_enhance: faceEnhance,
-          remove_bg: removeBg,
-          model: scale === 2 ? "x2plus" : "x4plus",
+          remove_bg: currentRemoveBg,
+          model: currentScale === 2 ? "x2plus" : "x4plus",
           userApiKey: userApiKey.trim(),
           userEndpointId: userEndpointId.trim(),
         }),
       });
 
       const data = await res.json();
+
+      if (isCancelledRef.current) return;
 
       if (!res.ok || data.error) {
         if (res.status === 401) {
@@ -178,14 +201,18 @@ export default function Home() {
                 r2Url: data.r2Url,
                 upscaledWidth: data.width,
                 upscaledHeight: data.height,
+                processedScale: currentScale,
+                processedRemoveBg: currentRemoveBg,
               }
             : it
         )
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (isCancelledRef.current) return;
+      const message = err instanceof Error ? err.message : "Failed";
       setItems((prev) =>
         prev.map((it) =>
-          it.id === item.id ? { ...it, status: "error", error: err.message || "Failed" } : it
+          it.id === item.id ? { ...it, status: "error", error: message } : it
         )
       );
     }
@@ -200,22 +227,25 @@ export default function Home() {
     const queue = items.filter((it) => it.status === "idle" || it.status === "error");
     if (queue.length === 0) return;
 
+    isCancelledRef.current = false;
     setIsBatchProcessing(true);
 
     const CONCURRENCY = 5;
     const running = [...queue];
 
     const worker = async () => {
-      while (running.length > 0) {
+      while (running.length > 0 && !isCancelledRef.current) {
         const item = running.shift();
-        if (item) {
+        if (item && !isCancelledRef.current) {
           await handleProcessItem(item);
         }
       }
     };
 
     await Promise.all(Array.from({ length: CONCURRENCY }).map(() => worker()));
-    setIsBatchProcessing(false);
+    if (!isCancelledRef.current) {
+      setIsBatchProcessing(false);
+    }
   };
 
   const handleDownloadAllZip = async () => {
@@ -228,16 +258,26 @@ export default function Home() {
 
       await Promise.all(
         completed.map(async (it) => {
-          const ext = removeBg ? "png" : "jpg";
+          const itemScale = it.processedScale || scale;
+          const itemRemoveBg = it.processedRemoveBg ?? removeBg;
+          const ext = itemRemoveBg ? "png" : "jpg";
           const dotIdx = it.name.lastIndexOf(".");
           const rawName = dotIdx !== -1 ? it.name.substring(0, dotIdx) : it.name;
-          const filename = `${rawName}_${scale}x.${ext}`;
+          const filename = `${rawName}_${itemScale}x.${ext}`;
 
           if (it.r2Url) {
-            const proxyUrl = `/api/download?url=${encodeURIComponent(it.r2Url)}&filename=${encodeURIComponent(filename)}`;
-            const resp = await fetch(proxyUrl);
-            const blob = await resp.blob();
-            zip.file(filename, blob);
+            try {
+              const proxyUrl = `/api/download?url=${encodeURIComponent(it.r2Url)}&filename=${encodeURIComponent(filename)}`;
+              const resp = await fetch(proxyUrl);
+              if (resp.ok) {
+                const blob = await resp.blob();
+                zip.file(filename, blob);
+              } else {
+                console.warn(`Failed to fetch ${filename} for ZIP: HTTP ${resp.status}`);
+              }
+            } catch (err) {
+              console.error(`Error downloading ${filename} for ZIP:`, err);
+            }
           } else if (it.upscaledBase64) {
             const base64Data = it.upscaledBase64.split(",")[1] || it.upscaledBase64;
             zip.file(filename, base64Data, { base64: true });
@@ -255,10 +295,12 @@ export default function Home() {
   };
 
   const handleDownloadSingle = async (item: BatchItem) => {
-    const ext = removeBg ? "png" : "jpg";
+    const itemScale = item.processedScale || scale;
+    const itemRemoveBg = item.processedRemoveBg ?? removeBg;
+    const ext = itemRemoveBg ? "png" : "jpg";
     const dotIdx = item.name.lastIndexOf(".");
     const rawName = dotIdx !== -1 ? item.name.substring(0, dotIdx) : item.name;
-    const filename = `${rawName}_${scale}x.${ext}`;
+    const filename = `${rawName}_${itemScale}x.${ext}`;
 
     if (item.r2Url) {
       const proxyUrl = `/api/download?url=${encodeURIComponent(item.r2Url)}&filename=${encodeURIComponent(filename)}`;
@@ -274,11 +316,24 @@ export default function Home() {
   };
 
   const handleRemoveItem = (id: string) => {
-    setItems((prev) => prev.filter((it) => it.id !== id));
+    setItems((prev) => {
+      const itemToRemove = prev.find((it) => it.id === id);
+      if (itemToRemove?.previewUrl) {
+        URL.revokeObjectURL(itemToRemove.previewUrl);
+      }
+      return prev.filter((it) => it.id !== id);
+    });
   };
 
   const handleClearAll = () => {
+    isCancelledRef.current = true;
+    items.forEach((it) => {
+      if (it.previewUrl) {
+        URL.revokeObjectURL(it.previewUrl);
+      }
+    });
     setItems([]);
+    setIsBatchProcessing(false);
   };
 
   const completedCount = items.filter((it) => it.status === "completed").length;
@@ -608,7 +663,7 @@ export default function Home() {
               </p>
               <div className="flex items-start gap-1.5 text-neutral-400 bg-neutral-950 p-2.5 rounded-xl border border-neutral-800">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span>Key จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณเท่านั้น (LocalStorage) จะไม่ถูกเก็บลงฐานข้อมูลใดๆ ทั้งสิ้น</span>
+                <span>Key จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณ (LocalStorage) และส่งผ่าน HTTPS ไปยัง API Proxy เพื่อประมวลผลบน RunPod GPU โดยตรง ไม่มีการเก็บ Key หรือรูปภาพลงฐานข้อมูล</span>
               </div>
             </div>
 

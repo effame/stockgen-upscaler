@@ -2,11 +2,16 @@ name: Web CI Build Check
 
 on:
   push:
+    branches: [ main, master ]
     paths:
       - 'web/**'
   pull_request:
+    branches: [ main, master ]
     paths:
       - 'web/**'
+
+permissions:
+  contents: read
 
 jobs:
   build:

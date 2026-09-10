@@ -1,11 +1,11 @@
-# ⚡ Batch Upscaler AI
+# ⚡ Batch Upscaler AI (Web Client)
 
-[![CI Build Check](https://github.com/effame/batch-upscaler/actions/workflows/ci.yml/badge.svg)](https://github.com/effame/batch-upscaler/actions/workflows/ci.yml)
+[![CI Build Check](https://github.com/effame/stockgen-upscaler/actions/workflows/web-ci.yml/badge.svg)](https://github.com/effame/stockgen-upscaler/actions/workflows/web-ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
 [![RunPod Serverless](https://img.shields.io/badge/RunPod-Serverless%20GPU-purple)](https://runpod.io/)
 
-A fast, lightweight, and open-source batch image upscaling web tool powered by **RunPod Serverless GPU (Real-ESRGAN)**.
+A fast, lightweight, and open-source batch image upscaling web frontend powered by **RunPod Serverless GPU (Real-ESRGAN)**.
 
 Upload 10 to 50+ images at once, upscale to 4K UHD, fix faces, remove backgrounds, and download everything as a single ZIP file in one click.
 
@@ -18,7 +18,7 @@ Upload 10 to 50+ images at once, upscale to 4K UHD, fix faces, remove background
 - 👤 **Face Fix (GFPGAN)**: Restore and enhance facial details automatically.
 - ✂️ **Background Removal**: Clean alpha cutout powered by Rembg.
 - 📦 **1-Click ZIP Download**: Package all upscaled images into a single `.zip`.
-- 🔒 **Zero Data Retention**: Pure client-to-GPU tool. No databases, no login, no accounts required.
+- 🔒 **Stateless & BYOK**: Bring Your Own Key architecture. Zero database storage, no user accounts required.
 
 ---
 
@@ -33,10 +33,10 @@ Upload 10 to 50+ images at once, upscale to 4K UHD, fix faces, remove background
 
 ## 🚀 Quick Start
 
-### 1. Clone the repository
+### 1. Repository Setup
 ```bash
-git clone https://github.com/effame/batch-upscaler.git
-cd batch-upscaler
+git clone https://github.com/effame/stockgen-upscaler.git
+cd stockgen-upscaler/web
 ```
 
 ### 2. Install dependencies
