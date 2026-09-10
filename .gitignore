@@ -5,3 +5,15 @@ weights/
 *.pth
 **/weights/
 **/tmp/
+
+# Python venv
+.venv/
+env/
+
+# Web frontend
+web/node_modules/
+web/.next/
+web/out/
+web/.vercel/
+web/*.tsbuildinfo
+web/.env*.local

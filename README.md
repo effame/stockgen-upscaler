@@ -9,6 +9,22 @@ A high-performance, production-ready **RunPod Serverless GPU Worker** designed f
 
 ---
 
+## 📁 Repository Structure (Monorepo)
+
+```text
+stockgen-upscaler/
+  ├── web/                 # 🌐 Next.js 16 Web Application (Batch Upscaler UI)
+  ├── scripts/             # 🛠️ Maintenance & Deployment Scripts
+  ├── cli/                 # 💻 Python CLI Tool
+  ├── colab/               # 📓 Google Colab Notebooks
+  ├── experimental/        # 🧪 Experimental & Debug Files
+  ├── Dockerfile           # 🐳 RunPod Serverless GPU Worker Docker image
+  ├── rp_handler.py        # ⚡ RunPod Serverless Worker Handler
+  └── models.py            # 🧠 Model loaders (Real-ESRGAN, GFPGAN)
+```
+
+---
+
 ## ⚡ Core Capabilities
 
 - 🔍 **AI Super Resolution (Real-ESRGAN & UltraSharp)**:
